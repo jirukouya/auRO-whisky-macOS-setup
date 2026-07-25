@@ -52,7 +52,14 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## Uninstalling
 
-Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall uaRO. The file has a tiered rollback built in (game only → +Wine bottle → +Whisky itself → +shared infra like Homebrew/Rosetta), so you can undo as much or as little as you want.
+Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall uaRO. Pick how much to undo:
+
+| Level | Removes |
+|---|---|
+| 1 | Just the game |
+| 2 | + the Wine bottle |
+| 3 | + Whisky itself |
+| 4 | + shared infra (Homebrew, Rosetta) |
 
 ## Status
 
