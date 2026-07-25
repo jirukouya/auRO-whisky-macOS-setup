@@ -326,10 +326,13 @@ This is not paranoia — on a real run, files extracted to `~/Downloads` passed 
 ```bash
 eval "$(whisky shellenv "$BOTTLE_NAME")"
 WIN_DEST="Z:$(printf '%s' "$GAME_DIR" | sed 's:/:\\\\:g')"
-wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST"
+nohup wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST" >/tmp/uaro_installer.log 2>&1 &
+disown
 ```
 
-**Tell the user this command opens a real window that may not automatically pop to the front** — nothing in the terminal will look like it's "doing" anything once this command starts. Have them check the Dock (or press Cmd+Tab) for the installer window if it doesn't appear immediately, rather than assuming it silently failed.
+**Launch this in the background — never run it as a single blocking foreground call.** This is a GUI wizard a human has to click through, and Screen 3 ("Installing," a multi-GB unpack) can genuinely take many minutes. If you instead run `wine64 ...` synchronously and wait for it to exit, your own command-execution tooling will very likely time out while the wizard is still legitimately open on screen and waiting for a click — that reads as a crash, but isn't one. Background it (`&`/`nohup` as above, or your tool's own non-blocking/background-execution mode if it has one), tell the user you'll check back, then confirm completion with a separate, short follow-up check rather than one long blocking wait — the same `$GAME_DIR`/`uaRO.exe` check just below doubles as that completion signal, not just a post-hoc verification.
+
+**Tell the user this opens a real window that may not automatically pop to the front** — nothing in the terminal will look like it's "doing" anything once this command starts. Have them check the Dock (or press Cmd+Tab) for the installer window if it doesn't appear immediately, rather than assuming it silently failed.
 
 Use `wine64` directly — never `whisky run` (that goes through `WhiskyCmd`, which is App-sandboxed, so Inno Setup can only write inside the Whisky container regardless of what `/DIR=` says). Confirm afterward that `$GAME_DIR` now actually contains the extracted game files before moving to Step 8.
 
@@ -407,8 +410,11 @@ winetricks -q gecko
 
 ```bash
 eval "$(whisky shellenv "$BOTTLE_NAME")"
-wine64 "$GAME_DIR/UaRo Patcher.exe"
+nohup wine64 "$GAME_DIR/UaRo Patcher.exe" >/tmp/uaro_patcher_gecko.log 2>&1 &
+disown
 ```
+
+**Background this one too, same reasoning as Step 7** — it waits on a human clicking a dialog, which can take longer than your tooling's command-execution timeout allows. Don't block on it; tell the user to watch for the dialog, then come back and check.
 
 When the "Wine Gecko Installer" dialog appears, **click Install** and wait for it to finish. **Never click Cancel.** (If driving this via computer-use/screen automation rather than a human at the keyboard: some Wine dialog windows don't reliably show up in screenshot/click pipelines gated by per-app permission allowlists even when the parent app is granted access — if a click can't be confirmed to land correctly, ask the human to click it directly rather than guessing coordinates.)
 
