@@ -62,9 +62,11 @@ Rules for filling it in:
 
 ```bash
 sw_vers
-uname -m                                  # arm64 = Apple Silicon, needs Rosetta (Step 2)
+uname -m                                  # arm64 = Apple Silicon, needs Rosetta (Step 2); anything else = Intel, see below
 defaults read com.apple.finder FXICloudDriveDesktop FXICloudDriveDocuments 2>/dev/null
 ```
+
+**Stop here if `uname -m` did not print `arm64`.** This skill only works on Apple Silicon Macs (M1 and later) — confirmed directly: the actual `Whisky.app` binary is Mach-O `arm64` only (no Intel slice), and Whisky's own Homebrew cask metadata declares `arch: arm64` as a hard requirement, not an optimization. There is no Intel-compatible path through Whisky for this install. If this machine reports `x86_64` (or anything other than `arm64`), tell the user plainly right now, before touching Step 1: *"This Mac has an Intel chip — this install method only works on Apple Silicon Macs (M1 or later). There isn't an Intel version of this skill."* Do not proceed to Step 1 or any later step.
 
 The iCloud check above tells you if the *official* toggle is on. Treat a "1" as a strong warning. **Treat a missing/0 result as inconclusive, not as proof of safety** — `~/Downloads` was affected on a real machine despite not being one of the two officially-named folders. The only real safety net is the write-then-wait-then-recheck step in Step 6, not this probe.
 
