@@ -65,11 +65,6 @@ Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall 
 
 **Public.** These Whisky fixes are useful beyond just uaRO, so this repo's [Releases](../../releases) archive Whisky.app and its Wine runtime in case the upstream sources ever disappear for good.
 
-## Acknowledgments
-
-- **@45rn0d3u5** on the uaRO Discord, who wrote and shared the original [`install-uaro-mac` reference](https://docs.google.com/document/d/1ISi_iijWQuf5AeAh-ITtLYWm-My444x--d7rvQLiaL8/edit?tab=t.0) this skill was built on top of.
-- **[Isaac Marovitz](https://github.com/IsaacMarovitz)**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this entire install path depends on.
-
 ## Disclaimer
 
 This is unofficial and not affiliated with, endorsed by, or supported by uaRO, Gravity Co., Whisky/Isaac Marovitz, or Apple. Run it at your own risk:
@@ -79,6 +74,11 @@ This is unofficial and not affiliated with, endorsed by, or supported by uaRO, G
 - **Real changes to your Mac.** This installs Homebrew, Rosetta, Whisky, and two apps in `/Applications` — all reversible (see *Uninstalling* above), but not a sandboxed trial run.
 - **No data collection.** Nothing here collects, transmits, or stores your personal data, credentials, or usage. Every login along the way (your Mac's admin password, your uaRO account) is handled directly by you — never by this skill or the AI running it.
 
+## Acknowledgments
+
+- **@45rn0d3u5** on the uaRO Discord, who wrote and shared the original [`install-uaro-mac` reference](https://docs.google.com/document/d/1ISi_iijWQuf5AeAh-ITtLYWm-My444x--d7rvQLiaL8/edit?tab=t.0) this skill was built on top of.
+- **[Isaac Marovitz](https://github.com/IsaacMarovitz)**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this entire install path depends on.
+
 ## License
 
-[MIT](./LICENSE).
+[MIT](./LICENSE) — free to use, modify, and share; provided as-is, with no warranty.
