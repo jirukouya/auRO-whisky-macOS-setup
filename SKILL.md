@@ -17,6 +17,33 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **After any binary patch, byte-diff against a backup.** Don't trust that a patch did only what you intended — prove it with `cmp -l`.
 - **`dd` writing to a binary file may be blocked in sandboxed/agent shells**, independent of file permissions. If it is, fall back to plain Python `open(path, 'r+b')` — it produces byte-identical results and isn't subject to the same restriction.
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
+- **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
+
+## 1a. Progress table (post this, updated, after every single step)
+
+Repost the **whole table**, not just the changed row, so the user always sees the full run at a glance:
+
+| Step | What it does | Status | Notes |
+|---|---|---|---|
+| 1 | Homebrew | ✅/❌/— | |
+| 2 | Rosetta 2 (Apple Silicon only) | ✅/❌/—/N/A | |
+| 3 | Whisky.app | ✅/❌/— | |
+| 4 | WhiskyWine runtime | ✅/❌/— | |
+| 5 | Bottle create/config | ✅/❌/— | |
+| 6 | Download & extract installer | ✅/❌/— | |
+| 7 | Run installer | ✅/❌/— | |
+| 8 | FCOM byte-patches | ✅/❌/— | |
+| 9 | Wine Gecko pre-install | ✅/❌/— | |
+| 10 | Game config files | ✅/❌/— | |
+| 11 | Launcher `.app` bundles + icon | ✅/❌/— | |
+| 12 | First-run verification | ✅/❌/— | |
+
+Rules for filling it in:
+- **✅** — state *how* it was verified (the actual command/output checked), not just "done". E.g. "`wine64 --version` → `wine-7.7`", not "installed".
+- **❌** — never leave this bare. The Notes cell must give exactly ONE recommended next action, chosen for *this* machine's actual detected environment (chip from `uname -m`, macOS version from `sw_vers`, what Pre-flight found already installed, what the real error text said) — not a generic list of possible causes. If genuinely unsure, say so plainly and propose the one action that would disambiguate it, rather than guessing.
+- **—** — not attempted yet this run. Don't mark a step ❌ preemptively just because it's later in the sequence.
+- **N/A** — doesn't apply to this machine (e.g. Step 2 on Intel Macs).
+- After posting the table, stop and ask explicitly, e.g. *"Step N looks good — proceed to Step N+1?"* (or, on a ❌ row, *"Want me to apply the fix above before continuing?"*). Wait for the user's actual reply. Do not treat silence, a prior unrelated "yes," or your own confidence that it'll work as approval.
 
 ## 1. Parameters (decide these fresh, every machine)
 
