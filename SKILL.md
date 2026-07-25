@@ -19,6 +19,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
 - **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the two launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
+- **Some steps may trigger a macOS admin/login password prompt (`sudo`) — expected, not a sign of a hijacked machine.** Homebrew's installer (Step 1) commonly needs it the first time it creates `/opt/homebrew`; Rosetta (Step 2) occasionally does too. Warn the user *before* running that command that a password prompt may appear. If the shell running these commands has no interactive terminal attached, the prompt can't be answered programmatically at all — it will hang or fail outright (`sudo: a password is required`) instead of actually showing a box to type into. If that happens, tell the user to open a normal Terminal window themselves and run that one command directly — only they should ever type their own Mac password, never ask them to tell it to you.
 
 ## 1a. Progress table (post this, updated, after every single step)
 
@@ -96,7 +97,9 @@ Tell the user plainly what was found (or that nothing was) before proceeding, an
 The installer sits behind a login wall (`https://uaro.net/cp/?module=account&action=login`) and is a multi-GB file — both mean this is slow and 100% human-driven, so start it now, in parallel with Steps 1–5, rather than discovering at Step 6 that nobody's downloaded anything yet:
 
 > [!IMPORTANT]
-> **Please go log in and start the download now:** open `https://uaro.net/cp/?module=account&action=login`, log in with your uaRO account, and start downloading the installer. It's large, so let it run in the background — I'll get Homebrew/Whisky/the runtime set up in the meantime, and check back for it once both are ready.
+> **Please go log in and start the download now:** open `https://uaro.net/cp/?module=account&action=login`, log in with your uaRO account, and start downloading the installer. **Don't have a uaRO account yet?** The same site has a registration/sign-up option — create one first, then come back to this login page. It's large, so let it run in the background — I'll get Homebrew/Whisky/the runtime set up in the meantime, and check back for it once both are ready.
+
+This background download does **not** change the per-step approval gate in 1a — keep posting the progress table and stopping for explicit approval after every one of Steps 1–5, exactly as normal. The download simply runs unattended in another window while the user is replying between steps; it is not a license to chain Steps 1–5 together without waiting for approval.
 
 Don't wait on the exact filename to identify it once it lands — **browsers frequently rename downloads** (`UaRO_Setup(1).zip`, a generic `download.zip`, etc.), but the installer's **file size stays constant** for a given build regardless of what it's named. Detect it by size instead:
 
@@ -125,6 +128,8 @@ brew --version   # verify
 
 **On a truly from-scratch Mac, that `eval` line is not optional.** The official installer does not add Homebrew to the *current* shell's `PATH` — it only prints instructions to add `brew shellenv` to a shell profile for *future* sessions. Skipping it means `brew --version` (and every later `brew` call this session) fails with "command not found" even though Step 1 actually succeeded — don't misread that as an install failure.
 
+**Tell the user before running this:** the installer may prompt for the Mac's admin/login password (it needs it the first time to create `/opt/homebrew`). That's expected — not a sign of anything wrong. If the command instead hangs or fails with something like `sudo: a password is required` rather than actually showing a password prompt, the current shell has no interactive terminal attached to answer it — ask the user to open a normal Terminal window and run the install command there directly.
+
 ## Step 2 — Rosetta 2 (Apple Silicon only)
 
 ```bash
@@ -133,6 +138,8 @@ if [[ "$(uname -m)" == "arm64" ]] && ! pgrep -q oahd; then
 fi
 pgrep -q oahd && echo "Rosetta OK"
 ```
+
+This can also prompt for the Mac's admin/login password on some machines — same guidance as Step 1: expected if it happens, and if it hangs/fails instead of prompting, have the user run it themselves in a normal Terminal window.
 
 ## Step 3 — Whisky.app
 
@@ -321,6 +328,8 @@ eval "$(whisky shellenv "$BOTTLE_NAME")"
 WIN_DEST="Z:$(printf '%s' "$GAME_DIR" | sed 's:/:\\\\:g')"
 wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST"
 ```
+
+**Tell the user this command opens a real window that may not automatically pop to the front** — nothing in the terminal will look like it's "doing" anything once this command starts. Have them check the Dock (or press Cmd+Tab) for the installer window if it doesn't appear immediately, rather than assuming it silently failed.
 
 Use `wine64` directly — never `whisky run` (that goes through `WhiskyCmd`, which is App-sandboxed, so Inno Setup can only write inside the Whisky container regardless of what `/DIR=` says). Confirm afterward that `$GAME_DIR` now actually contains the extracted game files before moving to Step 8.
 
