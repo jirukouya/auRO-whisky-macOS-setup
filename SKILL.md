@@ -212,13 +212,25 @@ This is not paranoia — on a real run, files extracted to `~/Downloads` passed 
 
 ## Step 7 — Run the installer
 
+**As soon as Step 6 finishes — before running anything below — post this to the user verbatim.** The installer is a normal interactive GUI wizard; whether the user is clicking through it themselves or you're driving it via computer-use tools, these 4 screens are the only ones that matter, and getting any of them wrong means redoing Steps 6–7:
+
+> [!IMPORTANT]
+> **The installer is about to open. Here's exactly what to do on each screen — nothing else needs to change:**
+>
+> | # | Screen | Do this |
+> |---|---|---|
+> | 1 | **Select Setup Install Mode** | Click the **first option** ("Install for me only" / current user) — ⚠️ **not** "Install for all users" |
+> | 2 | **Select Destination Location** | ✅ Leave the path exactly as shown — **do not** change or browse to a different folder |
+> | 3 | **Installing** | Just wait — this is a multi-GB install, it can take a while, don't close the window |
+> | 4 | **Completing the Setup Wizard** | ⚠️ **Uncheck "Launch \<game\>"** before clicking Finish — the game is not configured yet (Steps 8–11 still need to run first); launching now would run an unpatched, unconfigured copy |
+
 ```bash
 eval "$(whisky shellenv "$BOTTLE_NAME")"
 WIN_DEST="Z:$(printf '%s' "$GAME_DIR" | sed 's:/:\\\\:g')"
 wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST"
 ```
 
-Use `wine64` directly — never `whisky run` (that goes through `WhiskyCmd`, which is App-sandboxed, so Inno Setup can only write inside the Whisky container regardless of what `/DIR=` says). The install wizard is a normal GUI window; walk through it (Install for me only, confirm `$GAME_DIR` as the destination, Finish — **uncheck "Launch" on the final screen**, since Steps 8–11 still need to happen before the game is actually configured correctly).
+Use `wine64` directly — never `whisky run` (that goes through `WhiskyCmd`, which is App-sandboxed, so Inno Setup can only write inside the Whisky container regardless of what `/DIR=` says). Confirm afterward that `$GAME_DIR` now actually contains the extracted game files before moving to Step 8.
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
