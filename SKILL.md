@@ -153,13 +153,12 @@ cp -R /tmp/Whisky-extract/Whisky.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
-**If that download itself fails** (this repo's own upstream `Whisky-App/Whisky` GitHub release is a single point of failure — Whisky is unmaintained upstream, so a vanished tag/asset is a real possibility, not paranoia): fall back to this repo's own archived copy instead of giving up. **That backup lives in a private repo** — use `gh release download` (authenticated), not plain `curl`, and this requires `gh auth login` to have already run with an account that has access:
+**If that download itself fails** (Whisky's own upstream `Whisky-App/Whisky` GitHub release is a single point of failure — Whisky is unmaintained upstream, so a vanished tag/asset is a real possibility, not paranoia): fall back to this repo's own archived copy instead of giving up. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
-gh release download whisky-backup-2026-07-25 \
-  --repo jirukouya/auRO-whisky-macOS-setup \
-  --pattern "Whisky-app-2.3.5.zip" --dir /tmp --clobber
-ditto -xk /tmp/Whisky-app-2.3.5.zip /tmp/Whisky-extract
+curl -fL --progress-bar -o /tmp/Whisky.zip \
+  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip
+ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
 cp -R /tmp/Whisky-extract/Whisky.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
@@ -182,13 +181,11 @@ curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
 
-**If that archive.org snapshot itself becomes unreachable** (a single pinned snapshot URL is a real single point of failure, not a hypothetical — Internet Archive outages/URL changes do happen): fall back to this repo's own archived copy, byte-identical to the file above. **That backup lives in a private repo** — use `gh release download` (authenticated), not plain `curl`, and this requires `gh auth login` to have already run with an account that has access:
+**If that archive.org snapshot itself becomes unreachable** (a single pinned snapshot URL is a real single point of failure, not a hypothetical — Internet Archive outages/URL changes do happen): fall back to this repo's own archived copy, byte-identical to the file above. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
-gh release download whisky-backup-2026-07-25 \
-  --repo jirukouya/auRO-whisky-macOS-setup \
-  --pattern "WhiskyWine-Libraries-2.5.0.zip" --dir ~/Downloads --clobber
-mv ~/Downloads/WhiskyWine-Libraries-2.5.0.zip ~/Downloads/WhiskyWine-Libraries.zip
+curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
+  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
 ```
 
 Either way, continue identically from here:
