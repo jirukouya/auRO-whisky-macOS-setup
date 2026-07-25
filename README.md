@@ -6,7 +6,7 @@
 
 ## The problem this solves
 
-uaRO ([Ragnarok Online](https://en.wikipedia.org/wiki/Ragnarok_Online) private server) is a Windows-only game protected by **Gepard Shield 3.0** anti-cheat. The obvious approach — run it in a Windows VM (VMware Fusion) — turned into a dead end:
+uaRO ([Ragnarok Online](https://en.wikipedia.org/wiki/Ragnarok_Online) private server) is a Windows-only game protected by **Gepard Shield 3.0** anti-cheat. The obvious approach — run it in a **Windows 11** VM (VMware Fusion) — turned into a dead end:
 
 - More virtual CPUs → Gepard threw an error almost immediately.
 - Fewer virtual CPUs → avoided the error, but the game stuttered badly within seconds.
