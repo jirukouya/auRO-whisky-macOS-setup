@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "把 uaRO 装到这台 Mac 上", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it.
+description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "把 uaRO 装到这台 Mac 上", "uninstall uaRO", "卸载 uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
 # uaRO on macOS via Whisky — Full Install Skill
@@ -518,6 +518,21 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 2. Confirm the round-trip: `grep -E "WIDTH|HEIGHT|OLD_WIDTH|OLD_HEIGHT" "$GAME_DIR/savedata/OptionInfo.lua"` should now show the GUI's chosen values in `WIDTH`/`HEIGHT` and the previous values preserved in `OLD_WIDTH`/`OLD_HEIGHT`.
 3. Open `UaRO.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
 4. Tell the user: **never use the patcher's own in-app Settings button** — always use `UaRO Settings.app` for graphics/resolution changes, since the patcher will silently re-download an unpatched `setup.exe` over time.
+
+## Installation complete — post this once Step 12 passes
+
+This is the payoff moment after a long, mostly-invisible process — post it plainly, don't skip straight to a dry "done":
+
+> [!TIP]
+> **All 12 steps complete — uaRO is fully installed and configured on this Mac.**
+> 请安心享受你的游戏体验 uaRO 🎮
+
+Then walk the user through these four points, every time, regardless of how the install went:
+
+1. **To play** — open `UaRO.app` in `/Applications` (Launchpad/Spotlight also work).
+2. **To change any game setting** (resolution, graphics device, etc.) — always through `/Applications/UaRO Settings.app`. Never the patcher's own in-app Settings button — see item 4 above for why.
+3. **If a "Program Error" popup ever appears** — don't panic, this is a known unresolved Wine/Gecko crash (see *Known open issues* below), not something the user broke. Just click **Close** and relaunch `UaRO.app`; it has not reliably recurred on a second try.
+4. **To uninstall uaRO entirely** — just invoke this skill again and ask for uninstall; the *Uninstall / rollback* section below has the exact commands, no need to figure it out manually.
 
 ## Known open issues
 
