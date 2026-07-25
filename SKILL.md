@@ -18,6 +18,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **`dd` writing to a binary file may be blocked in sandboxed/agent shells**, independent of file permissions. If it is, fall back to plain Python `open(path, 'r+b')` — it produces byte-identical results and isn't subject to the same restriction.
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
+- **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the two launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
 
 ## 1a. Progress table (post this, updated, after every single step)
 
@@ -25,6 +26,7 @@ Repost the **whole table**, not just the changed row, so the user always sees th
 
 | Step | What it does | Status | Notes |
 |---|---|---|---|
+| 2a | Detect existing state | ✅/❌/— | |
 | 1 | Homebrew | ✅/❌/— | |
 | 2 | Rosetta 2 (Apple Silicon only) | ✅/❌/—/N/A | |
 | 3 | Whisky.app | ✅/❌/— | |
@@ -92,8 +94,11 @@ Tell the user plainly what was found (or that nothing was) before proceeding, an
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
 brew --version   # verify
 ```
+
+**On a truly from-scratch Mac, that `eval` line is not optional.** The official installer does not add Homebrew to the *current* shell's `PATH` — it only prints instructions to add `brew shellenv` to a shell profile for *future* sessions. Skipping it means `brew --version` (and every later `brew` call this session) fails with "command not found" even though Step 1 actually succeeded — don't misread that as an install failure.
 
 ## Step 2 — Rosetta 2 (Apple Silicon only)
 
@@ -226,7 +231,7 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 
 ```bash
 mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
-curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "<INSTALLER_URL_OR_LOCAL_PATH>"
+curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "<INSTALLER_SOURCE>"   # the value resolved in Parameters, Step 1 — a URL, or skip curl entirely and `cp` if it's already a local .zip
 mkdir -p ~/Games/UaRO_Setup
 ditto -xk ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # NEVER unzip — macOS's bundled Info-Zip
                                                        # silently no-ops on ZIP64 archives over 4GB
@@ -300,7 +305,7 @@ xxd -s $((0x21E39)) -l 4 "$SETUP"     # confirm context reads dcd8dfe0 before pa
 printf '\xdd\xd8\xb4\x40' | dd of="$SETUP" bs=1 seek=$((0x21E39)) count=4 conv=notrunc
 ```
 
-**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results:
+**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results. **`<GAME_DIR>` here is a placeholder, not a live shell variable — substitute the real resolved path before running this:**
 
 ```python
 path = "<GAME_DIR>/setup.exe"
@@ -465,7 +470,7 @@ done
 
 Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), both apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
 
-`UaRO.app/Contents/MacOS/uaro-launch`:
+`UaRO.app/Contents/MacOS/uaro-launch` — **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk; the app has no shell variables to fall back on when the user later double-clicks it:**
 
 ```bash
 #!/bin/zsh
