@@ -18,16 +18,15 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## The fix, and what made it hard
 
-**Whisky** (a lightweight macOS Wine wrapper) sidesteps the problem entirely: instead of running a full Windows 11 on ARM guest OS for Gepard to trip over, it translates the game's x86 Windows calls directly on top of macOS — no ARM Windows kernel involved at all. That part was quick to figure out. Getting there reliably was not, because Whisky itself has real problems:
+**Whisky** (a lightweight macOS Wine wrapper) sidesteps the problem: it translates the game's x86 Windows calls directly on macOS, no ARM Windows kernel involved. But Whisky itself is discontinued and broken in non-obvious ways:
 
-- Whisky was **discontinued by its creator in April 2025** — its Homebrew installer cask is disabled upstream, and the CDN it downloads its Wine runtime from returns a hard 404.
-- Whisky's own "Install GPTK" button in-app shows a fake instant success and silently leaves an empty folder behind.
-- The file that tells Whisky "the Wine runtime is installed" has to match an exact internal schema — a plausible-looking but wrong version of that file fails silently.
-- macOS's iCloud Drive sync can relocate freshly-downloaded/extracted files out from under an in-progress install, tens of seconds after they were written — breaking things with a cryptic Wine file-not-found error.
-- The game's patcher hard-depends on a Wine component (Gecko) that has a one-shot install prompt — decline it once by mistake, and there's no easy way back.
-- The Windows installer itself crashes under Rosetta translation unless two specific bytes in it are patched first.
+- Its Homebrew cask and Wine-runtime download endpoint are both dead upstream.
+- A required internal config file has to match an exact schema, or Whisky silently rejects it.
+- iCloud Drive sync can relocate freshly-written files out from under an in-progress install.
+- The game's patcher hard-depends on a Wine component (Gecko) with a one-shot install prompt.
+- The Windows installer crashes under Rosetta unless two specific bytes in it are patched.
 
-None of these are documented anywhere as a checklist — they were each found the hard way, by actually running the whole process end to end once, on a real machine, and fixing what broke. `SKILL.md` is the result: every one of those fixes, plus the verification step that catches it if it silently fails again, written up as instructions an AI agent can follow with no other context. The payoff: uaRO running for hours with zero disconnects and a crisp, near-native UI.
+`SKILL.md` is every one of those fixes, plus the verification to catch it if any fails silently again — found by actually running the whole process once, end to end, on a real machine.
 
 ## How to actually run this
 
