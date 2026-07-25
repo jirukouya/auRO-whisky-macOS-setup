@@ -578,10 +578,19 @@ cd "$ICON_TMP"
 # the highest-quality source available; the standalone icnbig.ico files in
 # $GAME_DIR are the same resolution but 8-bit indexed color, so prefer the exe.
 wrestool -x --output=patcher_main.ico --type=14 --name=1 "$GAME_DIR/UaRo Patcher.exe"
-icotool -x -o . patcher_main.ico   # -> patcher_main_1_48x48x24.png (or similar; check actual filename)
+
+# Extract by explicit --index, not a guessed filename pattern — icotool's
+# auto-naming (e.g. patcher_main_1_48x48x24.png) isn't guaranteed across
+# versions. `icotool -l` lists what's actually inside; take --index=1
+# (there's normally only one icon in this particular resource) and give
+# it a name we control:
+icotool -l patcher_main.ico
+# ^ if this ever lists more than one --icon entry, pick the largest --width
+#   and pass that entry's --index below instead of assuming 1.
+icotool -x --index=1 -o patcher_48.png patcher_main.ico
+SRC=patcher_48.png
 
 mkdir -p UaRO.iconset
-SRC=$(ls patcher_main_*48x48*.png | head -1)
 for spec in "16 16" "32 16@2x" "32 32" "64 32@2x" "128 128" "256 128@2x" "256 256" "512 256@2x" "512 512" "1024 512@2x"; do
 	size=$(echo $spec | cut -d' ' -f1); name=$(echo $spec | cut -d' ' -f2)
 	sips -z $size $size "$SRC" --out "UaRO.iconset/icon_${name}.png" >/dev/null
