@@ -29,4 +29,4 @@ That's it — `SKILL.md` is fully self-contained: every command, byte offset, co
 
 ## Status
 
-Private for now. The install procedure documented here (Whisky/Wine fixes, the Gecko pitfall, the iCloud file-relocation bug, etc.) is broadly useful beyond this one game, so this may get made public later — that's a separate decision from whether it works, and it works.
+Public. The install procedure documented here (Whisky/Wine fixes, the Gecko pitfall, the iCloud file-relocation bug, etc.) is broadly useful beyond this one game — made public so anyone handed this `SKILL.md` can also reach the archived Whisky.app/WhiskyWine backups in this repo's Releases if the upstream sources are ever down.
