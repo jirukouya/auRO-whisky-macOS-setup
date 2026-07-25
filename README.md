@@ -18,7 +18,7 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## The fix, and what made it hard
 
-**Whisky** (a lightweight macOS Wine wrapper) sidesteps the problem entirely: it runs the Windows game close to native, with no VM layer for Gepard to detect. That part was quick to figure out. Getting there reliably was not, because Whisky itself has real problems:
+**Whisky** (a lightweight macOS Wine wrapper) sidesteps the problem entirely: instead of running a full Windows 11 on ARM guest OS for Gepard to trip over, it translates the game's x86 Windows calls directly on top of macOS — no ARM Windows kernel involved at all. That part was quick to figure out. Getting there reliably was not, because Whisky itself has real problems:
 
 - Whisky was **discontinued by its creator in April 2025** — its Homebrew installer cask is disabled upstream, and the CDN it downloads its Wine runtime from returns a hard 404.
 - Whisky's own "Install GPTK" button in-app shows a fake instant success and silently leaves an empty folder behind.
