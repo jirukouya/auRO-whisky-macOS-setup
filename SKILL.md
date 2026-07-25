@@ -372,12 +372,15 @@ done
 	<key>CFBundleVersion</key><string>1.0</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleIconFile</key><string>AppIcon.icns</string>
 	<key>CFBundleExecutable</key><string>uaro-launch</string>
 	<key>LSMinimumSystemVersion</key><string>11.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 ```
+
+Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), both apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
 
 `UaRO.app/Contents/MacOS/uaro-launch`:
 
@@ -416,6 +419,38 @@ _patch_setup_exe() {
 _patch_setup_exe
 exec wine64 "setup.exe" >/dev/null 2>&1
 ```
+
+### App icon (extract from the game's own files — do not fabricate/download one)
+
+The game already ships a usable icon; the two launcher `.app`s just need it pulled out and converted. Requires `icoutils` (`brew install icoutils`, gives `wrestool`/`icotool`):
+
+```bash
+brew install icoutils   # idempotent if already present
+
+ICON_TMP="$(mktemp -d)"
+cd "$ICON_TMP"
+
+# UaRo Patcher.exe embeds a 48x48 24-bit true-color icon (group_icon --name=1) —
+# the highest-quality source available; the standalone icnbig.ico files in
+# $GAME_DIR are the same resolution but 8-bit indexed color, so prefer the exe.
+wrestool -x --output=patcher_main.ico --type=14 --name=1 "$GAME_DIR/UaRo Patcher.exe"
+icotool -x -o . patcher_main.ico   # -> patcher_main_1_48x48x24.png (or similar; check actual filename)
+
+mkdir -p UaRO.iconset
+SRC=$(ls patcher_main_*48x48*.png | head -1)
+for spec in "16 16" "32 16@2x" "32 32" "64 32@2x" "128 128" "256 128@2x" "256 256" "512 256@2x" "512 512" "1024 512@2x"; do
+	size=$(echo $spec | cut -d' ' -f1); name=$(echo $spec | cut -d' ' -f2)
+	sips -z $size $size "$SRC" --out "UaRO.iconset/icon_${name}.png" >/dev/null
+done
+iconutil -c icns UaRO.iconset -o AppIcon.icns
+
+for APP in "UaRO.app" "UaRO Settings.app"; do
+	mkdir -p "/Applications/$APP/Contents/Resources"
+	cp AppIcon.icns "/Applications/$APP/Contents/Resources/AppIcon.icns"
+done
+```
+
+The source PNG is only 48×48 (nothing higher-res is embedded anywhere in the game files), so `sips` is upscaling for the 256/512/1024 tiers — it'll look a little soft at the largest Launchpad/Finder preview sizes, but is fine for a desktop shortcut. This step can run any time after `$GAME_DIR` is populated (Step 6 onward) and before the final `lsregister -f` below, since that call is what makes Launch Services notice the new icon — if the two apps were already registered without an icon, re-run `lsregister -f` plus `killall Dock; killall Finder` to bust the icon cache after adding it later.
 
 ```bash
 chmod +x "/Applications/UaRO.app/Contents/MacOS/uaro-launch" "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"
@@ -482,6 +517,7 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 | `DX9DEVICENAME` ends up with half the expected backslashes | Generated via an **unquoted** heredoc — the shell itself collapsed `\\` pairs before the inner script saw them | Use a quoted heredoc (`<<'EOF'`) or write a real script file, never an unquoted heredoc, for backslash-heavy content |
 | Hand-edited resolution in `OptionInfo.lua` doesn't match what RO OpenSetup shows | `OptionInfo.lua` isn't the sole source of truth — RO OpenSetup has its own dropdown/writer | Pick the value from RO OpenSetup's own dropdown and click Apply; let it round-trip back into the file |
 | A freshly built `.app` bundle doesn't show up via `mdls`/`mdfind` | Spotlight indexing lags well behind actual Launch Services registration | Verify with `lsregister -dump \| grep <bundle-id>` instead |
+| Launcher `.app`s show the generic blank-document icon | No `CFBundleIconFile` + no icon actually placed in `Contents/Resources/` | Extract the game's own 48x48 icon from `UaRo Patcher.exe` (`wrestool`/`icotool`), build an `.icns` with `iconutil`, add `CFBundleIconFile`, then `lsregister -f` + `killall Dock; killall Finder` |
 | `setup.exe` crashes 'illegal instruction at 0042C0CD' / '00421E39' | Untranslatable FCOM encodings at Site A / Site B | Run the FCOM patch (Step 8 / `UaRO Settings.app`) |
 | `setup.exe` crashes at a *different* `0042xxxx` address | Uncatalogued third FCOM site (installer build changed) | Subtract `0x400000`, dump 16 bytes, treat as a new finding — don't assume the two known offsets are permanent |
 | `setup.exe` "stops working" after a patcher update | `UaRo Patcher.exe` re-downloaded and overwrote the patched file with the original | Always use `UaRO Settings.app` (re-patches every launch); never the patcher's own in-app Settings button |
