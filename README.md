@@ -16,7 +16,9 @@ Whisky (a lightweight Wine wrapper) turned out to be the actual fix — running 
 
 ## Credit
 
-Built on top of an original community-shared `install-uaro-mac` reference script/writeup, then hardened by actually executing every step once end to end and fixing what broke.
+Built on top of an original `install-uaro-mac` reference write-up shared by **@45rn0d3u5** on the uaRO Discord, then hardened by actually executing every step once end to end and fixing what broke. Also thanks to **Isaac Marovitz**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this whole install path depends on.
+
+See `SKILL.md`'s closing *Credits & Disclaimer* section for the full acknowledgments and license info.
 
 ## How to use this
 

@@ -781,3 +781,15 @@ softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs
 ```
 
 **If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky's own distribution channels are permanently dead upstream — the Homebrew cask is disabled and the WhiskyWine/GPTK download endpoint 404s (see the "Why this exists" background). Re-installing later will **not** work by just re-running Step 3/4 against the live internet; it depends on the archived copy already saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and is reachable before letting the user tear down their only working copy.
+
+## Credits & Disclaimer
+
+**Acknowledgments**
+- The original step-by-step reference this skill was built from and hardened against real-world failures came from **@45rn0d3u5** on the uaRO Discord ([source document](https://docs.google.com/document/d/1ISi_iijWQuf5AeAh-ITtLYWm-My444x--d7rvQLiaL8/edit?tab=t.0)). This skill wouldn't exist without that groundwork — thank you.
+- Thanks to **Isaac Marovitz**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this entire install path is built on. Whisky itself is no longer actively maintained (discontinued April 2025), but it's still the right tool for this job, and a fair amount of this skill exists specifically to keep it usable despite that.
+
+**Disclaimer**
+- This project is unofficial and not affiliated with, endorsed by, or supported by uaRO, Gravity Co., Whisky/Isaac Marovitz, or Apple.
+- Provided as-is, with no warranty of any kind — use at your own risk. See *Known open issues* and *Common Gotchas* above for what's already known to be imperfect.
+- This skill only reads/writes files under the directories it creates or is told to use (`$GAME_DIR`, the Whisky bottle, `/Applications/UaRO*.app`) plus standard Homebrew/system locations needed to install its own dependencies. It does not collect, transmit, or store any personal data, credentials, or telemetry — every credential prompt along the way (macOS admin password, uaRO account login) is handled directly by the user, never by this skill or the AI running it.
+- Licensed under the [MIT License](./LICENSE) — see that file for the full text.
