@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "把 uaRO 装到这台 Mac 上", "uninstall uaRO", "卸载 uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
+description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
 # uaRO on macOS via Whisky — Full Install Skill
@@ -525,7 +525,7 @@ This is the payoff moment after a long, mostly-invisible process — post it pla
 
 > [!TIP]
 > **All 12 steps complete — uaRO is fully installed and configured on this Mac.**
-> 请安心享受你的游戏体验 uaRO 🎮
+> Enjoy the game 🎮
 
 Then walk the user through these four points, every time, regardless of how the install went:
 
