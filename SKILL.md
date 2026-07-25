@@ -51,7 +51,7 @@ Rules for filling it in:
 |---|---|---|
 | `BOTTLE_NAME` | `uaro` | Resolve the *real* on-disk UUID freshly via `whisky list` every time — never hardcode a UUID across machines. |
 | `GAME_DIR` | `$HOME/Games/UaRO World of Your Dream` | Must NOT be under `~/Desktop`, `~/Documents`, or `~/Downloads` — see the iCloud gotcha below. `~/Games/<name>` or `~/Library/Application Support/<vendor>/<name>` are both confirmed-safe locations. |
-| `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. Ask the user for a target (e.g. "something like 1440x900") and pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12. |
+| `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. **Detect this machine's actual display first** (`system_profiler SPDisplaysDataType \| grep Resolution`), then offer that as the recommended default when asking the user, rather than asking with no context. Pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12 — different Macs have different native/scaled resolution lists, so the "right" answer genuinely varies by machine. |
 | `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. |
 
 ## 2. Pre-flight
@@ -63,6 +63,30 @@ defaults read com.apple.finder FXICloudDriveDesktop FXICloudDriveDocuments 2>/de
 ```
 
 The iCloud check above tells you if the *official* toggle is on. Treat a "1" as a strong warning. **Treat a missing/0 result as inconclusive, not as proof of safety** — `~/Downloads` was affected on a real machine despite not being one of the two officially-named folders. The only real safety net is the write-then-wait-then-recheck step in Step 6, not this probe.
+
+## 2a. Detect existing state (before Step 3 — different machines start from different points)
+
+Not every machine this runs on is a truly blank slate — Whisky, a bottle, or even a partial/full uaRO install may already exist from a previous attempt. Check before assuming Step 3 onward all need to run from zero:
+
+```bash
+# Existing Whisky.app / CLI?
+ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
+command -v whisky
+
+# Existing bottles, and does any of them already have wine64?
+whisky list 2>/dev/null
+
+# Existing uaRO install anywhere plausible — common host paths, plus inside every bottle's drive_c
+find ~/Games ~/Documents ~/Downloads ~/"Library/Application Support" -maxdepth 3 -iname "UaRO*" -type d 2>/dev/null
+find ~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c -maxdepth 3 -iname "UaRO*" -type d 2>/dev/null
+```
+
+Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
+
+- **Whisky.app / CLI already present and working** → skip straight to checking the runtime (Step 4's verify command), don't reinstall.
+- **A bottle already exists** (any name) → ask whether to reuse it or make a fresh one; if reusing, that bottle's real name becomes `BOTTLE_NAME` for every later step — never assume `uaro`.
+- **An existing uaRO install is found** → ask the user whether this is a repair/reconfigure (skip Step 6-7, jump to verifying Steps 8-11 against the existing `$GAME_DIR`) or whether they want a clean second copy elsewhere.
+- **Nothing found anywhere** → proceed with Steps 1-12 as a genuine fresh install.
 
 ## Step 1 — Homebrew
 
@@ -189,6 +213,15 @@ plutil -lint "$META" && plutil -p "$META"
 
 All five calls are safe to run unconditionally — they're idempotent, even though a fresh bottle typically already defaults `dxvkAsync`, `windowsVersion`, and `enhancedSync` correctly and only `dxvk`/`avxEnabled` actually need flipping. Confirm the printed result shows all five as intended before moving on.
 
+**Self-healing check — confirm `wine64` is actually reachable through this bottle before trusting it, don't wait until Step 7's crash to find out:**
+
+```bash
+eval "$(whisky shellenv "$BOTTLE_NAME")"
+command -v wine64 || echo "MISSING"
+```
+
+If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the runtime and the bottle's environment aren't actually linked (seen on real machines where WhiskyWine was present on disk but a stale/mismatched `shellenv` path pointed elsewhere). Fix by re-running Step 4's install/verify, then re-check this before proceeding — don't proceed into Step 6/7 on a bottle where this printed `MISSING`.
+
 ## Step 6 — Download & extract the uaRO installer
 
 ```bash
@@ -231,6 +264,17 @@ wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST"
 ```
 
 Use `wine64` directly — never `whisky run` (that goes through `WhiskyCmd`, which is App-sandboxed, so Inno Setup can only write inside the Whisky container regardless of what `/DIR=` says). Confirm afterward that `$GAME_DIR` now actually contains the extracted game files before moving to Step 8.
+
+**Verify it actually landed where asked — some Inno Setup installer builds silently ignore `/DIR=`:**
+
+```bash
+ls "$GAME_DIR"/uaRO.exe 2>/dev/null && echo "Landed at \$GAME_DIR — OK" || {
+  echo "Not at \$GAME_DIR — searching bottle drive_c for where it actually went..."
+  find ~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c -maxdepth 4 -iname "uaRO.exe" 2>/dev/null
+}
+```
+
+If it landed somewhere else, **adopt that real path as `GAME_DIR` for every step from here on** rather than fighting the installer — don't assume the value you passed to `/DIR=` is where it ended up.
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
