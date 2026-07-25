@@ -14,7 +14,7 @@ uaRO ([Ragnarok Online](https://en.wikipedia.org/wiki/Ragnarok_Online) private s
 - Every Visual C++ Redistributable from 2005 through 2026, x86/x64/ARM → no effect.
 - Every graphics tweak (resolution, texture quality, DirectX version, graphics device, windowed vs. fullscreen) → no effect.
 
-None of it mattered, because the actual blocker was never performance — it was Gepard detecting it was running inside a VM at all.
+None of it mattered, because the actual blocker was never performance — it was Gepard Shield not working well with the **Windows 11 on ARM** processor that a VM on Apple Silicon has to run.
 
 ## The fix, and what made it hard
 
