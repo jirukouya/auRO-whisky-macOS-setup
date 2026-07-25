@@ -1,8 +1,8 @@
 # uaRO on Apple Silicon, via Whisky
 
-**This repo is one file that installs a Windows game on your Mac by talking to an AI, not by reading instructions yourself.**
+**This repo is one file that installs the uaRO Windows game on your Mac by talking to an AI, not by reading instructions yourself.**
 
-[`SKILL.md`](./SKILL.md) is a complete, self-contained playbook written *for an AI coding agent* (Claude Code or OpenAI Codex) to read and execute — not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing: Homebrew, Rosetta 2, Whisky.app, the WhiskyWine runtime, a properly configured Wine "bottle," the uaRO installer itself, a couple of binary compatibility patches, a required Wine Gecko component, game config files, and two double-clickable launcher apps in `/Applications` — checking in with you at every step, in plain language, telling you exactly what (if anything) you need to click or type.
+[`SKILL.md`](./SKILL.md) is a self-contained playbook written *for an AI coding agent* (Claude Code or OpenAI Codex) to read and execute, not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing end to end. Curious what that actually involves? Open `SKILL.md` — it's all in there.
 
 ## The problem this solves
 
