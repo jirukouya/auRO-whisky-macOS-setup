@@ -27,6 +27,7 @@ Repost the **whole table**, not just the changed row, so the user always sees th
 | Step | What it does | Status | Notes |
 |---|---|---|---|
 | 2a | Detect existing state | ✅/❌/— | |
+| 2b | Kick off installer download | ✅/❌/— | |
 | 1 | Homebrew | ✅/❌/— | |
 | 2 | Rosetta 2 (Apple Silicon only) | ✅/❌/—/N/A | |
 | 3 | Whisky.app | ✅/❌/— | |
@@ -54,7 +55,7 @@ Rules for filling it in:
 | `BOTTLE_NAME` | `uaro` | Resolve the *real* on-disk UUID freshly via `whisky list` every time — never hardcode a UUID across machines. |
 | `GAME_DIR` | `$HOME/Games/UaRO World of Your Dream` | Must NOT be under `~/Desktop`, `~/Documents`, or `~/Downloads` — see the iCloud gotcha below. `~/Games/<name>` or `~/Library/Application Support/<vendor>/<name>` are both confirmed-safe locations. |
 | `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. **Detect this machine's actual display first** (`system_profiler SPDisplaysDataType \| grep Resolution`), then offer that as the recommended default when asking the user, rather than asking with no context. Pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12 — different Macs have different native/scaled resolution lists, so the "right" answer genuinely varies by machine. |
-| `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. |
+| `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders, detected **by file size, not filename** (see 2b) | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. The installer itself sits behind a login wall (`https://uaro.net/cp/?module=account&action=login` — user-provided, not something you can fetch on their behalf), so this is always a human-driven download, never one you can script end-to-end. |
 
 ## 2. Pre-flight
 
@@ -89,6 +90,30 @@ Tell the user plainly what was found (or that nothing was) before proceeding, an
 - **A bottle already exists** (any name) → ask whether to reuse it or make a fresh one; if reusing, that bottle's real name becomes `BOTTLE_NAME` for every later step — never assume `uaro`.
 - **An existing uaRO install is found** → ask the user whether this is a repair/reconfigure (skip Step 6-7, jump to verifying Steps 8-11 against the existing `$GAME_DIR`) or whether they want a clean second copy elsewhere.
 - **Nothing found anywhere** → proceed with Steps 1-12 as a genuine fresh install.
+
+## 2b. Kick off the uaRO installer download now — don't wait until Step 6
+
+The installer sits behind a login wall (`https://uaro.net/cp/?module=account&action=login`) and is a multi-GB file — both mean this is slow and 100% human-driven, so start it now, in parallel with Steps 1–5, rather than discovering at Step 6 that nobody's downloaded anything yet:
+
+> [!IMPORTANT]
+> **Please go log in and start the download now:** open `https://uaro.net/cp/?module=account&action=login`, log in with your uaRO account, and start downloading the installer. It's large, so let it run in the background — I'll get Homebrew/Whisky/the runtime set up in the meantime, and check back for it once both are ready.
+
+Don't wait on the exact filename to identify it once it lands — **browsers frequently rename downloads** (`UaRO_Setup(1).zip`, a generic `download.zip`, etc.), but the installer's **file size stays constant** for a given build regardless of what it's named. Detect it by size instead:
+
+```bash
+# ~4.7GB observed on a previous run — use a wide margin since future uaRO
+# builds may differ slightly. Widen further if this comes up empty.
+find ~/Downloads ~/Desktop -maxdepth 1 -type f -size +4000M -size -6000M -exec ls -lh {} \; 2>/dev/null
+```
+
+If more than one file matches, ask the user which one; if none match yet, the download isn't done — check again later rather than guessing at a partial file. Once a real match is found, **relocate it immediately** rather than leaving it in `~/Downloads`/`~/Desktop` — this doubles as prevention for the iCloud-relocation gotcha, since it's now out of the risky folders before that 30-second window in Step 6 even matters:
+
+```bash
+mkdir -p ~/Games
+mv "<matched_file>" ~/Games/UaRO_Setup.zip
+```
+
+`INSTALLER_SOURCE` for Step 6 is now simply `~/Games/UaRO_Setup.zip` — a local path, so Step 6's branch takes the `cp` path, not `curl`.
 
 ## Step 1 — Homebrew
 
@@ -253,11 +278,13 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 
 ## Step 6 — Download & extract the uaRO installer
 
-`INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does):
+`INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does). If 2b already relocated the download to `~/Games/UaRO_Setup.zip`, there's nothing to fetch — skip straight to extraction:
 
 ```bash
 mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
-if [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
+if [[ "$INSTALLER_SOURCE" == ~/Games/UaRO_Setup.zip ]]; then
+  : # already staged by 2b — nothing to do
+elif [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
   curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
 else
   cp "$INSTALLER_SOURCE" ~/Games/UaRO_Setup.zip
