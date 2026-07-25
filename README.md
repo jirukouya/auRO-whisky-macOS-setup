@@ -63,7 +63,7 @@ Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall 
 
 ## Status
 
-Public. The fixes documented here (Whisky's dead infrastructure, the Gecko pitfall, the iCloud file-relocation bug, etc.) are broadly useful beyond this one game, and this repo's [Releases](../../releases) hold archived copies of Whisky.app and its Wine runtime in case the upstream sources ever disappear for good.
+**Public.** These Whisky fixes are useful beyond just uaRO, so this repo's [Releases](../../releases) archive Whisky.app and its Wine runtime in case the upstream sources ever disappear for good.
 
 ## Acknowledgments
 
