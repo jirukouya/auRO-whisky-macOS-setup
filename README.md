@@ -67,7 +67,7 @@ Public. The fixes documented here (Whisky's dead infrastructure, the Gecko pitfa
 
 ## Acknowledgments
 
-- **@45rn0d3u5** on the uaRO Discord, who wrote and shared the original `install-uaro-mac` reference this skill was built on top of.
+- **@45rn0d3u5** on the uaRO Discord, who wrote and shared the original [`install-uaro-mac` reference](https://docs.google.com/document/d/1ISi_iijWQuf5AeAh-ITtLYWm-My444x--d7rvQLiaL8/edit?tab=t.0) this skill was built on top of.
 - **[Isaac Marovitz](https://github.com/IsaacMarovitz)**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this entire install path depends on.
 
 See `SKILL.md`'s closing *Credits & Disclaimer* section for the full write-up, including scope and no-warranty notes.
