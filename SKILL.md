@@ -64,7 +64,10 @@ Rules for filling it in:
 sw_vers
 uname -m                                  # arm64 = Apple Silicon, needs Rosetta (Step 2); anything else = Intel, see below
 defaults read com.apple.finder FXICloudDriveDesktop FXICloudDriveDocuments 2>/dev/null
+df -h /                                   # need roughly 15-20GB free — see below
 ```
+
+**Check free disk space before going any further.** Between the uaRO installer itself (~4.7GB download, more once extracted), the WhiskyWine runtime, and the various `.orig-backup` copies this process keeps for safety, plan on needing roughly **15-20GB free** on the boot volume. If `df -h /` shows meaningfully less than that available, tell the user now, plainly — e.g. *"Heads up — this install needs about 15-20GB of free space, and this Mac currently has [X]GB available. Worth freeing up some space (Trash, old downloads, etc.) before we start, since running out partway through tends to show up as a confusing partial-download or partial-extraction failure rather than a clear error."* Don't let a low-space machine run silently into Step 6/7 and discover it there.
 
 **Stop here if `uname -m` did not print `arm64`.** Whisky was built specifically for Apple Silicon — confirmed directly: the actual `Whisky.app` binary is Mach-O `arm64` only (no Intel slice), and Whisky's own Homebrew cask metadata declares `arch: arm64` as a requirement. Because of that, there isn't an Intel-compatible path through this particular skill. If this machine reports `x86_64` (or anything other than `arm64`), let the user know kindly before touching Step 1, e.g.: *"Quick heads-up — Whisky, the tool this install relies on, was built specifically for Apple Silicon Macs (M1 and later). This Mac has an Intel chip, so this particular skill isn't the right fit here."* Then hold off on Step 1 and the rest until the user's decided how they'd like to proceed.
 
@@ -417,6 +420,8 @@ disown
 ```
 
 **Background this one too, same reasoning as Step 7** — it waits on a human clicking a dialog, which can take longer than your tooling's command-execution timeout allows. Don't block on it; tell the user to watch for the dialog, then come back and check.
+
+**Same window-focus caveat as Step 7 applies here too** — this dialog may not automatically pop to the front. Tell the user to check the Dock (or Cmd+Tab) if it doesn't appear right away, rather than assuming nothing happened.
 
 When the "Wine Gecko Installer" dialog appears, **click Install** and wait for it to finish. **Never click Cancel.** (If driving this via computer-use/screen automation rather than a human at the keyboard: some Wine dialog windows don't reliably show up in screenshot/click pipelines gated by per-app permission allowlists even when the parent app is granted access — if a click can't be confirmed to land correctly, ask the human to click it directly rather than guessing coordinates.)
 
