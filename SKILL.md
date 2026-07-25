@@ -191,14 +191,16 @@ Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: 
 ```bash
 SUPPORT="$HOME/Library/Application Support/com.isaacmarovitz.Whisky"
 mkdir -p ~/Downloads   # transient scratch only — the .zip itself isn't at risk the way an extracted app bundle is, but move fast
-curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
+caffeinate -i curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
+
+**`caffeinate -i` wraps this download** — unlike a browser download (which requests its own "stay awake" assertion automatically), a `curl` call run this way has no such protection. On a laptop that's idle-timeout-eligible, this download can take a few minutes; without `caffeinate`, the Mac going to sleep partway through would stall or corrupt it, and it isn't obvious to a user why. `caffeinate` here just holds the system awake for exactly as long as `curl` is running, then releases automatically.
 
 **If that archive.org snapshot itself becomes unreachable** (a single pinned snapshot URL is a real single point of failure, not a hypothetical — Internet Archive outages/URL changes do happen): fall back to this repo's own archived copy, byte-identical to the file above. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
-curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
+caffeinate -i curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
   https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
 ```
 
@@ -333,9 +335,11 @@ This is not paranoia — on a real run, files extracted to `~/Downloads` passed 
 ```bash
 eval "$(whisky shellenv "$BOTTLE_NAME")"
 WIN_DEST="Z:$(printf '%s' "$GAME_DIR" | sed 's:/:\\\\:g')"
-nohup wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST" >/tmp/uaro_installer.log 2>&1 &
+nohup caffeinate -i wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST" >/tmp/uaro_installer.log 2>&1 &
 disown
 ```
+
+**`caffeinate -i` is there for the same reason as Step 4's download** — Screen 3 ("Installing") can run for several minutes with the user just watching, and neither Wine nor Inno Setup requests a "stay awake" assertion on their own. If the Mac idles into sleep mid-install, the install stalls without any clear error pointing at why. `caffeinate` holds the assertion only as long as `wine64` is running and releases it automatically once the wizard's process exits.
 
 **Launch this in the background — never run it as a single blocking foreground call.** This is a GUI wizard a human has to click through, and Screen 3 ("Installing," a multi-GB unpack) can genuinely take many minutes. If you instead run `wine64 ...` synchronously and wait for it to exit, your own command-execution tooling will very likely time out while the wizard is still legitimately open on screen and waiting for a click — that reads as a crash, but isn't one. Background it (`&`/`nohup` as above, or your tool's own non-blocking/background-execution mode if it has one), tell the user you'll check back, then confirm completion with a separate, short follow-up check rather than one long blocking wait — the same `$GAME_DIR`/`uaRO.exe` check just below doubles as that completion signal, not just a post-hoc verification.
 
