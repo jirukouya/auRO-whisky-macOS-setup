@@ -625,14 +625,45 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 
 ## Uninstall / rollback
 
-Non-regenerable: `$GAME_DIR/savedata/` (save data, character settings) — back this up separately if the user cares about it before removing anything.
-
-Everything else is safely re-derivable by re-running this skill from scratch:
+**Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen:
 
 ```bash
-rm -rf "/Applications/UaRO.app" "/Applications/UaRO Settings.app"
-"$(command -v whisky)" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
-rm -rf "$GAME_DIR"                              # after backing up savedata/ if desired
-# Whisky.app itself, the WhiskyWine runtime under ~/Library/Application Support/com.isaacmarovitz.Whisky,
-# and Homebrew/Rosetta are shared infrastructure — leave them unless truly starting over.
+cp -R "$GAME_DIR/savedata" ~/Desktop/uaRO-savedata-backup-"$(date +%Y%m%d)"
 ```
+
+Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
+
+| Level | Removes | Keeps | When to use |
+|---|---|---|---|
+| **1 — Game only** | Launcher apps, `$GAME_DIR` | Bottle, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Redoing Steps 6–11 fresh (corrupted install, want a clean patch state) |
+| **2 — + Bottle** | Level 1 + the `$BOTTLE_NAME` bottle | Whisky.app, WhiskyWine runtime, Homebrew, Rosetta | Bottle config got tangled, want Step 5 redone from scratch |
+| **3 — + Whisky itself** | Level 2 + Whisky.app + the WhiskyWine runtime | Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
+| **4 — + shared infra** | Level 3 + Homebrew + Rosetta | nothing | ⚠️ Only if nothing *else* on this Mac depends on Homebrew/Rosetta — check first, most machines have unrelated tools relying on both |
+
+```bash
+# --- Level 1: game only ---
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+"$LSREGISTER" -u "/Applications/UaRO.app" "/Applications/UaRO Settings.app" 2>/dev/null
+rm -rf "/Applications/UaRO.app" "/Applications/UaRO Settings.app" "$GAME_DIR"
+# Verify: neither app should resolve, and the game dir should be gone
+"$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
+test -d "$GAME_DIR" && echo "still there" || echo "removed"
+
+# --- Level 2: also drop the bottle ---
+"$(command -v whisky)" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
+whisky list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
+
+# --- Level 3: also remove Whisky.app + the WhiskyWine runtime ---
+rm -rf /Applications/Whisky.app ~/Applications/Whisky.app
+rm -rf ~/Library/Application\ Support/com.isaacmarovitz.Whisky
+brew uninstall --cask whisky 2>/dev/null   # no-op if it was sideloaded, not brewed
+command -v whisky || echo "whisky CLI gone"
+
+# --- Level 4: also remove shared infra (confirm nothing else needs these first) ---
+softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs Rosetta
+# Homebrew's own uninstall is interactive/destructive to *everything* it manages —
+# don't script this blind; point the user at https://github.com/Homebrew/install#uninstall-homebrew
+# and let them run it themselves if they're certain.
+```
+
+**If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky's own distribution channels are permanently dead upstream — the Homebrew cask is disabled and the WhiskyWine/GPTK download endpoint 404s (see the "Why this exists" background). Re-installing later will **not** work by just re-running Step 3/4 against the live internet; it depends on the archived copy already saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and is reachable before letting the user tear down their only working copy.
