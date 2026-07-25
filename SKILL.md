@@ -116,7 +116,23 @@ Don't wait on the exact filename to identify it once it lands — **browsers fre
 find ~/Downloads ~/Desktop -maxdepth 1 -type f -size +4000M -size -6000M -exec ls -lh {} \; 2>/dev/null
 ```
 
-If more than one file matches, ask the user which one; if none match yet, the download isn't done — check again later rather than guessing at a partial file. Once a real match is found, **relocate it immediately** rather than leaving it in `~/Downloads`/`~/Desktop` — this doubles as prevention for the iCloud-relocation gotcha, since it's now out of the risky folders before that 30-second window in Step 6 even matters:
+If more than one file matches, ask the user which one; if none match yet, the download isn't done — check again later rather than guessing at a partial file.
+
+**A file matching the size window isn't necessarily finished** — it could still be actively growing and just passing through that range on its way to a larger final size, or the browser could still be flushing the last bit to disk. Confirm the size is actually stable before treating it as done, the same "check, wait, recheck" idea used for the iCloud gotcha elsewhere in this skill:
+
+```bash
+CANDIDATE="<matched_file>"   # from the find command above
+SIZE1=$(stat -f%z "$CANDIDATE")
+sleep 5
+SIZE2=$(stat -f%z "$CANDIDATE")
+if [[ "$SIZE1" != "$SIZE2" ]]; then
+  echo "Still growing ($SIZE1 -> $SIZE2 bytes) — download still in progress, check again in a bit"
+else
+  echo "Size stable at $SIZE2 bytes — looks finished, safe to proceed"
+fi
+```
+
+Once the size is confirmed stable, **relocate it immediately** rather than leaving it in `~/Downloads`/`~/Desktop` — this doubles as prevention for the iCloud-relocation gotcha, since it's now out of the risky folders before that 30-second window in Step 6 even matters:
 
 ```bash
 mkdir -p ~/Games
