@@ -128,6 +128,17 @@ cp -R /tmp/Whisky-extract/Whisky.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
+**If that download itself fails** (this repo's own upstream `Whisky-App/Whisky` GitHub release is a single point of failure — Whisky is unmaintained upstream, so a vanished tag/asset is a real possibility, not paranoia): fall back to this repo's own archived copy instead of giving up. **That backup lives in a private repo** — use `gh release download` (authenticated), not plain `curl`, and this requires `gh auth login` to have already run with an account that has access:
+
+```bash
+gh release download whisky-backup-2026-07-25 \
+  --repo jirukouya/auRO-whisky-macOS-setup \
+  --pattern "Whisky-app-2.3.5.zip" --dir /tmp --clobber
+ditto -xk /tmp/Whisky-app-2.3.5.zip /tmp/Whisky-extract
+cp -R /tmp/Whisky-extract/Whisky.app /Applications/
+xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
+```
+
 Locate the CLI (brew symlink first, then inside whichever Whisky.app was found):
 
 ```bash
@@ -144,7 +155,20 @@ SUPPORT="$HOME/Library/Application Support/com.isaacmarovitz.Whisky"
 mkdir -p ~/Downloads   # transient scratch only — the .zip itself isn't at risk the way an extracted app bundle is, but move fast
 curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
+```
 
+**If that archive.org snapshot itself becomes unreachable** (a single pinned snapshot URL is a real single point of failure, not a hypothetical — Internet Archive outages/URL changes do happen): fall back to this repo's own archived copy, byte-identical to the file above. **That backup lives in a private repo** — use `gh release download` (authenticated), not plain `curl`, and this requires `gh auth login` to have already run with an account that has access:
+
+```bash
+gh release download whisky-backup-2026-07-25 \
+  --repo jirukouya/auRO-whisky-macOS-setup \
+  --pattern "WhiskyWine-Libraries-2.5.0.zip" --dir ~/Downloads --clobber
+mv ~/Downloads/WhiskyWine-Libraries-2.5.0.zip ~/Downloads/WhiskyWine-Libraries.zip
+```
+
+Either way, continue identically from here:
+
+```bash
 cd ~/Downloads
 ditto -xk WhiskyWine-Libraries.zip .
 mkdir -p "$SUPPORT"
@@ -229,9 +253,15 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 
 ## Step 6 — Download & extract the uaRO installer
 
+`INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does):
+
 ```bash
 mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
-curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "<INSTALLER_SOURCE>"   # the value resolved in Parameters, Step 1 — a URL, or skip curl entirely and `cp` if it's already a local .zip
+if [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
+  curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
+else
+  cp "$INSTALLER_SOURCE" ~/Games/UaRO_Setup.zip
+fi
 mkdir -p ~/Games/UaRO_Setup
 ditto -xk ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # NEVER unzip — macOS's bundled Info-Zip
                                                        # silently no-ops on ZIP64 archives over 4GB
@@ -388,7 +418,9 @@ Write a small Python script **to a file** (not a heredoc) to do the substitution
 import re
 path = "<GAME_DIR>/savedata/OptionInfo.lua"
 guid = "<GUID_FROM_UUIDGEN>"
-W, H = <CHOSEN_WIDTH>, <CHOSEN_HEIGHT>   # resolve via Step 12, not guessed here
+W, H = <CHOSEN_WIDTH>, <CHOSEN_HEIGHT>   # first-pass guess only — use the RESOLUTION parameter's auto-detected
+                                          # native-display value from Step 1's Parameters table; Step 12 will
+                                          # overwrite these correctly via RO OpenSetup's own Apply flow regardless
 
 with open(path) as f:
     content = f.read()
