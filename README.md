@@ -65,6 +65,10 @@ Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall 
 
 **Public.** These Whisky fixes are useful beyond just uaRO, so this repo's [Releases](../../releases) archive Whisky.app and its Wine runtime in case the upstream sources ever disappear for good.
 
+## Changelog
+
+Latest: **v0.2.0** — fixed in-game menu shortcuts (`Cmd+A`/`Cmd+Z`) via Option=Alt instead of breaking `Cmd+V` paste, and mitigated the post-Gecko patcher's "Program Error" crash dialog. Full history in [CHANGELOG.md](./CHANGELOG.md).
+
 ## Disclaimer
 
 This is unofficial. Run it at your own risk:

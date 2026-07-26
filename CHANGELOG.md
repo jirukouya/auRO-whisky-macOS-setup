@@ -1,0 +1,32 @@
+# Changelog
+
+All notable changes to this skill are documented here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/) in spirit — MINOR bumps for new fixes/behavior, PATCH bumps for wording/doc-only corrections. Since this repo ships a procedure, not an API, "breaking change" isn't really applicable; a 1.0.0 will mark the install process being considered fully stable (no known open issues left).
+
+## [Unreleased]
+
+## [0.2.0] - 2026-07-26
+
+### Fixed
+- In-game menu shortcuts (`Cmd+A`, `Cmd+Z`, etc.) not registering — game shortcuts now go through `Option` (mapped to Alt via Wine's `LeftOptionIsAlt`/`RightOptionIsAlt`), matching how uaRO already behaves in a Windows VM. This replaces an earlier approach (disabling Wine's hidden macOS Edit menu) that fixed the same symptom but broke native `Cmd+V` paste as a side effect — the new approach has no such trade-off.
+- "Program Error" crash dialog appearing after the post-Gecko patcher launch — mitigated (not root-caused) by suppressing Wine's crash dialog (`ShowCrashDialog=0`) combined with a bounded single-retry watchdog in the launcher script.
+
+### Added
+- Step 2a now also detects bottles still running the old Edit-menu-disable fix (and migrates them) or missing the new Option/Alt fix entirely, and separately detects launchers missing the crash-dialog mitigation.
+- Step 12 first-run checklist now tells the user the game's Alt key is macOS's Option key.
+- "Known open issues" documents the precise trigger sequence found for the post-Gecko patcher crash (a likely Gepard anti-debug self-check breakpoint mishandled by Wine's exception dispatch), for anyone who wants to dig into the real root cause later.
+
+## [0.1.0] - 2026-07-25
+
+Initial public release. A single self-contained `SKILL.md` that installs uaRO on Apple Silicon Macs via Whisky, end to end, meant to be handed to a fresh Claude Code/Codex session with no other context.
+
+### Added
+- Steps 1–12: Homebrew → Rosetta 2 → Whisky.app → WhiskyWine runtime → bottle creation/config → download & run the uaRO installer → FCOM byte-patch for Rosetta compatibility → Wine Gecko pre-install → game config files → two launcher `.app` bundles (with icon extraction) → first-run verification.
+- Pre-flight checks: Apple Silicon gate, macOS version gate, disk space check.
+- Environment-adaptive detection/self-heal: existing-state scan (Step 2a), proactive installer-download handling (Step 2b) with iCloud-relocation avoidance and size-stability recheck.
+- Mandatory verification after every risky step (byte-diff after binary patches, decode-testing config files, `lsregister -dump` after building launchers) instead of trusting exit codes alone.
+- Per-step progress table with explicit user approval gate before advancing to the next step.
+- Uninstall/rollback section with tiered levels and backup-dependency warnings.
+- `caffeinate -i` wrapping around long unattended waits so macOS idle sleep doesn't stall the install.
+- README: project story (VMware/Gepard dead end, why Whisky needed real bug-fixing to work), how-to-run instructions, Credits & Disclaimer, MIT LICENSE.
