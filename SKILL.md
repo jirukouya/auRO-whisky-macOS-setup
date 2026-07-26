@@ -93,6 +93,15 @@ find ~/Games ~/Documents ~/Downloads ~/"Library/Application Support" -maxdepth 3
 find ~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c -maxdepth 3 -iname "UaRO*" -type d 2>/dev/null
 ```
 
+**If a bottle already exists, also check whether it's missing any fix added to this skill since it was created** — don't wait for the user to describe a symptom before mentioning it. Right now that means Step 9b's keybind fix; substitute the real bottle name for `$BOTTLE_NAME`:
+
+```bash
+eval "$(whisky shellenv "$BOTTLE_NAME")"
+command -v wine64 >/dev/null && wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu 2>/dev/null
+```
+
+No output (key not found) means Step 9b was never applied — most likely because this bottle predates it. Tell the user plainly, even if they never mentioned any keybind problem, e.g.: *"Heads up — this uaRO install was set up before a keybind fix was added to this skill. Cmd+A and Cmd+Z probably don't work correctly in-game right now (other Cmd shortcuts are fine). Want me to apply that fix now? It's quick, but does require fully closing the game first."* Apply Step 9b if they say yes, then continue with whatever else this run was for.
+
 Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
 
 - **Whisky.app / CLI already present and working** → skip straight to checking the runtime (Step 4's verify command), don't reinstall.
