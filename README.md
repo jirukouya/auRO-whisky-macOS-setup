@@ -30,21 +30,14 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-1. **Get `SKILL.md` onto the Mac you want to install uaRO on.** Either clone the whole repo:
-   ```bash
-   git clone https://github.com/jirukouya/auRO-whisky-macOS-setup.git
-   cd auRO-whisky-macOS-setup
-   ```
-   or just download `SKILL.md` by itself and put it anywhere convenient.
+1. **Open Terminal anywhere**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
 
-2. **Open Terminal in that folder**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
-
-3. **Tell it to run the skill.** Something like this is enough:
+2. **Paste this whole thing:**
    ```
-   Read SKILL.md in this folder and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
+   Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
    ```
 
-4. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
+3. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
 
 ## Updating an existing install
 
