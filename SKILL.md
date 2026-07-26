@@ -38,6 +38,7 @@ Repost the **whole table**, not just the changed row, so the user always sees th
 | 7 | Run installer | ✅/❌/— | |
 | 8 | FCOM byte-patches | ✅/❌/— | |
 | 9 | Wine Gecko pre-install | ✅/❌/— | |
+| 9b | Fix Cmd+A/Cmd+Z keybind conflict (Edit menu) | ✅/❌/— | |
 | 10 | Game config files | ✅/❌/— | |
 | 11 | Launcher `.app` bundles + icon | ✅/❌/— | |
 | 12 | First-run verification | ✅/❌/— | |
@@ -691,6 +692,7 @@ Then walk the user through these four points, every time, regardless of how the 
 2. **To change any game setting** (resolution, graphics device, etc.) — always through `/Applications/UaRO Settings.app`. Never the patcher's own in-app Settings button — see item 4 above for why.
 3. **If a "Program Error" popup ever appears** — don't panic, this is a known unresolved Wine/Gecko crash (see *Known open issues* below), not something the user broke. Just click **Close** and relaunch `UaRO.app`; it has not reliably recurred on a second try.
 4. **To uninstall uaRO entirely** — just invoke this skill again and ask for uninstall; the *Uninstall / rollback* section below has the exact commands, no need to figure it out manually.
+5. **Paste in-game uses `Ctrl+V`, not `Cmd+V`.** This is expected, a direct result of the Step 9b keybind fix (which is what makes `Cmd+A`/`Cmd+Z` work correctly) — not a bug or something missing.
 
 ## Known open issues
 
@@ -706,6 +708,28 @@ Then walk the user through these four points, every time, regardless of how the 
 - Investigate whether the patcher exposes a config flag to skip its HTML panel entirely, avoiding the Gecko-dependent code path (would need patcher-specific knowledge not yet gathered).
 
 This is explicitly **not yet root-caused** — don't assume a future session solved it just because it isn't mentioned again here; check back with whoever's running it.
+
+## Step 9b — Fix Cmd+A / Cmd+Z keybind conflict (Wine's injected Edit menu)
+
+**Root cause, confirmed against Whisky's own issue tracker, not a guess:** Whisky's forked Wine (`Whisky-App/wine`, `winemac.drv/cocoa_app.m`) injects a hidden "Edit" menu (Cut/Copy/Paste/Select All/Undo) into every Wine window. macOS matches that menu's key equivalents *before* a keypress is translated into the game's own key event — so `Cmd+A` (Select All) and `Cmd+Z` (Undo) get swallowed by that hidden menu and never reach the game at all, while unrelated combos like `Cmd+Q`/`Cmd+E` (not in that menu) pass straight through untouched. Same bug, same symptom, already reported upstream: [Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060).
+
+**Do this after Step 9, before the patcher/game is ever launched for real play** — and any time this symptom is reported on an existing install. The registry key is only read when a Wine window is created, so it has no effect on an already-running session:
+
+```bash
+pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running — close it first, this fix needs a clean bottle" || echo "Clean, safe to proceed"
+```
+
+```bash
+eval "$(whisky shellenv "$BOTTLE_NAME")"
+wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /t REG_SZ /d "" /f
+wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu   # confirm the empty value is now present
+```
+
+**Verified fix, not theoretical** — applied to a real bottle (`uaro`, macOS 26.5.2), game relaunched, `Cmd+A`/`Cmd+Z` both confirmed restored afterward.
+
+**A community fork's alternate approach is not a substitute — don't use it for this symptom.** [frankea/Whisky](https://github.com/frankea/Whisky) added a "Map Command Key to Windows Ctrl" toggle claiming to close #1060, but it only sets the older `LeftCommandIsCtrl`/`RightCommandIsCtrl` values, which control how an already-delivered Cmd keypress gets translated — it does nothing about the hidden Edit menu swallowing the keypress before that translation ever happens. Verified by reading that fork's actual commit diff: it doesn't touch `EditMenu` at all.
+
+**Trade-off to tell the user every time this fix is applied:** disabling the hidden Edit menu also removes the macOS-native clipboard paste it was quietly providing. **In-game paste switches from `Cmd+V` to `Ctrl+V`** afterward (e.g. pasting a party/whisper message) — this is the game's own always-present `Ctrl+V` binding becoming reachable now that the hidden menu isn't intercepting the keystroke first, not a new problem this fix introduced. Tell the user this plainly so `Cmd+V` suddenly "not working" doesn't read as a regression.
 
 ## Common Gotchas (reference table)
 
@@ -736,6 +760,8 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 | Launcher errors "a bottle with that name does not exist" | Hardcoded bottle name doesn't match the real one | Resolve the actual bottle name/UUID dynamically, don't hardcode across machines |
 | Patcher stuck forever at "Getting patch_main.txt...", blank white panel | Wine Gecko not installed — this is a hard dependency, not cosmetic | Pre-install via `winetricks -q gecko` (Step 9) before ever launching the patcher |
 | Wine Gecko Installer prompt never reappears, patcher permanently stuck | Clicking **Cancel** instead of Install appears to make Wine remember the decision and never re-prompt | Always click **Install**; better yet, pre-install non-interactively so the prompt never appears live |
+| `Cmd+A`/`Cmd+Z` do nothing (or trigger macOS select-all/undo) in-game, but other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts those two specific shortcuts before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Disable the injected menu (Step 9b): `wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /t REG_SZ /d "" /f`, then fully quit and relaunch the game |
+| In-game paste stops responding to `Cmd+V` after applying the Step 9b fix | Expected side effect, not a bug — disabling the hidden Edit menu also removes the native macOS-clipboard paste it was providing | Use `Ctrl+V` in-game instead; tell the user this ahead of time |
 
 ## Uninstall / rollback
 
