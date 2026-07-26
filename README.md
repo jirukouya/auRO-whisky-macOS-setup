@@ -40,21 +40,19 @@ None of it mattered, because the actual blocker was never performance — it was
 2. **Open Terminal in that folder**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
 
 3. **Tell it to run the skill.** Something like this is enough:
-   > Read SKILL.md in this folder and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
+   ```
+   Read SKILL.md in this folder and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
+   ```
 
 4. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
 
 ## Updating an existing install
 
-Already installed uaRO with this skill before? Paste this link to your AI session:
+Already installed uaRO with this skill before? Paste this whole thing to your AI session:
 
 ```
-https://raw.githubusercontent.com/jirukouya/auRO-whisky-macOS-setup/main/SKILL.md
+Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup — I already have uaRO installed, run Step 2a to check my existing install against the latest fixes, and apply anything that's missing.
 ```
-
-along with:
-
-> Fetch SKILL.md from this link. I already have uaRO installed — run Step 2a to check my existing install against the latest fixes, and apply anything that's missing.
 
 It'll detect what's out of date (old keybind fix, missing crash-dialog mitigation, etc.) and only touch what's actually missing — it won't reinstall anything that's already working. See [CHANGELOG.md](./CHANGELOG.md) for what's changed release to release.
 
