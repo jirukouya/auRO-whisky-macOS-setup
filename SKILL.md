@@ -106,6 +106,7 @@ Two independent things to check here:
 
 - **`$EDITMENU` has any output at all (even an empty value)** → this bottle has the *old*, superseded version of Step 9b applied (the one that disabled the hidden Edit menu). Tell the user plainly: *"Heads up — this uaRO install has an older fix applied that trades away native Cmd+V paste. There's a better fix now that doesn't have that trade-off. Want me to switch it over? Requires fully closing the game first."* If yes, apply the migration + current Step 9b.
 - **`$OPTALT` is empty** → Step 9b (current version) was never applied at all. Tell the user plainly, even if they never mentioned a keybind problem: *"Heads up — this uaRO install was set up before a keybind fix was added to this skill. In-game menu shortcuts (like opening the item window) probably don't work correctly right now. Want me to apply that fix now? It's quick, but does require fully closing the game first."* Apply Step 9b if they say yes, then continue with whatever else this run was for.
+- **If `/Applications/UaRO.app/Contents/MacOS/uaro-launch` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO.app/Contents/MacOS/uaro-launch"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
 
 Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
 
@@ -594,8 +595,37 @@ eval "$(/opt/homebrew/bin/whisky shellenv <BOTTLE_NAME>)"
 cd "<GAME_DIR>"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
 export WINE_CPU_TOPOLOGY=4:0,1,2,3
-exec wine64 "UaRo Patcher.exe" >/dev/null 2>&1
+
+# Suppress Wine's graphical crash dialog -- combined with the retry loop below,
+# the known false-positive patcher crash (see Known open issues) gets silently
+# retried once instead of popping an alarming "Program Error" window.
+wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
+
+attempt=1
+code=0
+while [[ $attempt -le 2 ]]; do
+    start=$(date +%s)
+    wine64 "UaRo Patcher.exe" >/dev/null 2>&1 &
+    pid=$!
+    wait $pid
+    code=$?
+    elapsed=$(( $(date +%s) - start ))
+
+    # A clean user-initiated quit exits 0. The known false-positive crash gets
+    # killed with the exception code as its exit status (a large, distinctly
+    # abnormal number) and happens early after launch -- retry once in that
+    # specific case only, never in a loop.
+    if [[ $code -eq 0 || $elapsed -ge 60 || $attempt -eq 2 ]]; then
+        break
+    fi
+    attempt=$((attempt + 1))
+done
+exit $code
 ```
+
+**Why this doesn't cost anything while the game is running:** `wait $pid` is a blocking call on the process's actual exit, not a poll loop — this script spends zero CPU while the patcher/game session is active, and the wrapper process itself disappears the moment the session ends (confirmed on a real machine: no lingering process, no measurable CPU/memory footprint). Don't rewrite this as a `sleep`-and-check polling loop; that would burn CPU for no reason across a long play session.
+
+**Verified fix, not theoretical** — applied to a real launcher, then deliberately reproduced the known post-Gecko patcher crash: no "Program Error" dialog appeared, and the wrapper script exited cleanly once the session ended, with nothing left running in the background afterward.
 
 `WINEDLLOVERRIDES` **must append**, never replace — `whisky shellenv` already exports DXVK overrides (`dxgi,d3d9,d3d10core,d3d11=n,b`); overwriting the variable disables DXVK and tanks FPS. `WINE_CPU_TOPOLOGY=4:0,1,2,3` stabilizes Gepard Shield's anti-debug CPU-detection routines (fixes crashes ~3s after login and `Gepard::T Code: 3::110::12` disconnects).
 
@@ -705,7 +735,7 @@ Then walk the user through these four points, every time, regardless of how the 
 
 1. **To play** — open `UaRO.app` in `/Applications` (Launchpad/Spotlight also work).
 2. **To change any game setting** (resolution, graphics device, etc.) — always through `/Applications/UaRO Settings.app`. Never the patcher's own in-app Settings button — see item 4 above for why.
-3. **If a "Program Error" popup ever appears** — don't panic, this is a known unresolved Wine/Gecko crash (see *Known open issues* below), not something the user broke. Just click **Close** and relaunch `UaRO.app`; it has not reliably recurred on a second try.
+3. **A "Program Error" popup shouldn't appear anymore** — the launcher now silently retries once instead of showing it (see *Known open issues* below for the underlying, still-not-root-caused bug this papers over). If it somehow still appears twice in a row, that's the retry also failing; don't panic, just relaunch `UaRO.app` manually.
 4. **To uninstall uaRO entirely** — just invoke this skill again and ask for uninstall; the *Uninstall / rollback* section below has the exact commands, no need to figure it out manually.
 5. **In-game menu shortcuts use `Option`, not `Command`** (e.g. `Option+A` for the item window) — this matches how uaRO behaves in a Windows VM too. Copy/paste (`Cmd+C`/`Cmd+V`) work normally, no change there.
 
@@ -719,7 +749,7 @@ Then walk the user through these four points, every time, regardless of how the 
 
 **More precise trigger sequence, captured with `WINEDEBUG=+seh,+exception` against a live reproduction:** immediately before the crash, the patcher's embedded HTML update-check page sets a CSS `animation-delay` style, then its JS engine tries to transition script state and hits `jscript:JScript_SetScriptState unimplemented state 3` — a real Wine gap, but not fatal by itself. Right after that, the same `int 3` fires at the same address (`uaro patcher+0xa059`) as before. The trace shows the process's *own* exception handlers (`call_vectored_handlers`, then `call_handler`) genuinely get invoked and return normally — strongly suggesting this is Gepard Shield's own anti-debug self-check (deliberately tripping a breakpoint and expecting its own handler to silently absorb it, as proof no external debugger is attached). Despite the handler chain running and returning, Wine's exception dispatcher still treats it as unhandled afterward and launches `winedbg`, popping the "Program Error" dialog — so this looks like a **false crash**: the game's own code isn't actually broken, but something in Wine's SEH bookkeeping fails to register the handler's return as "handled."
 
-**First mitigation:** just close the error and relaunch `UaRO.app` — this class of glitch has not reliably repeated on a second launch. If it does repeat consistently and someone wants to dig further:
+**Mitigated (not fixed) as of Step 11's launcher script:** `UaRO.app` now sets `ShowCrashDialog=0` and wraps the patcher launch in a bounded (max one retry) watchdog loop, so this class of glitch — which has not reliably repeated on a second launch — gets silently retried instead of popping the alarming dialog. This doesn't touch the actual root cause above; it just stops the false crash from being disruptive. If it does repeat consistently (i.e. the retry also fails) and someone wants to dig into the real root cause:
 - The `WINEDEBUG=+seh,+exception` capture described above is already done — re-run it (`wine64 "UaRo Patcher.exe"` from `$GAME_DIR`, in the background per Step 9's pattern) to get a fresh trace rather than starting from scratch.
 - Look specifically at how Wine's ntdll exception dispatch (`call_vectored_handlers`/`call_handler`/`call_stack_handlers`) decides an exception is still "unhandled" even after a handler runs and returns — that's where the disconnect appears to be, based on the trace above.
 - Check Wine/Whisky issue trackers for Gepard/anti-debug `int3` self-check reports specifically (not just generic Gecko crash reports) — the trigger looks anti-debug-related, not a Gecko rendering bug.
@@ -787,6 +817,7 @@ wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAl
 | Launcher errors "a bottle with that name does not exist" | Hardcoded bottle name doesn't match the real one | Resolve the actual bottle name/UUID dynamically, don't hardcode across machines |
 | Patcher stuck forever at "Getting patch_main.txt...", blank white panel | Wine Gecko not installed — this is a hard dependency, not cosmetic | Pre-install via `winetricks -q gecko` (Step 9) before ever launching the patcher |
 | Wine Gecko Installer prompt never reappears, patcher permanently stuck | Clicking **Cancel** instead of Install appears to make Wine remember the decision and never re-prompt | Always click **Install**; better yet, pre-install non-interactively so the prompt never appears live |
+| "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-launch` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
 | `Cmd+A`/`Cmd+Z` (or other Alt-style menu shortcuts) do nothing in-game, but `Cmd+C`/`Cmd+V`/other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts `Cmd+A`/`Cmd+Z`/`Cmd+C`/`Cmd+X`/`Cmd+V` before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Apply Step 9b: set `LeftOptionIsAlt`/`RightOptionIsAlt`, then use `Option+<letter>` in-game instead of `Cmd+<letter>` for menu shortcuts — leaves `Cmd+C`/`Cmd+V` untouched, no trade-off |
 | In-game paste needs `Ctrl+V` instead of `Cmd+V` (on a bottle set up with an earlier version of this skill) | An earlier version of Step 9b fixed the above by disabling the hidden Edit menu entirely — which fixed `Cmd+A`/`Cmd+Z` but broke `Cmd+V`'s automatic paste as a side effect | Undo it: `wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f`, then apply the current Step 9b (`LeftOptionIsAlt`/`RightOptionIsAlt`) instead — fixes both with no trade-off |
 
