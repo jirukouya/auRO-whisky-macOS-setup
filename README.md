@@ -44,6 +44,20 @@ None of it mattered, because the actual blocker was never performance — it was
 
 4. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
 
+## Updating an existing install
+
+Already installed uaRO with this skill before? Paste this link to your AI session:
+
+```
+https://raw.githubusercontent.com/jirukouya/auRO-whisky-macOS-setup/main/SKILL.md
+```
+
+along with:
+
+> Fetch SKILL.md from this link. I already have uaRO installed — run Step 2a to check my existing install against the latest fixes, and apply anything that's missing.
+
+It'll detect what's out of date (old keybind fix, missing crash-dialog mitigation, etc.) and only touch what's actually missing — it won't reinstall anything that's already working. See [CHANGELOG.md](./CHANGELOG.md) for what's changed release to release.
+
 ## What you'll need
 
 - A Mac with **Apple Silicon** (M1 or later) on **macOS 14 (Sonoma) or newer** — Whisky itself requires both; there's no path through this skill on an Intel Mac.
