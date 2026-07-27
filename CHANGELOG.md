@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-27
+
+### Changed
+- `uaro-cli repair` now actually diagnoses before it fixes, instead of blindly re-running `codesign`/`lsregister` regardless of whether anything was wrong. It checks the game install and bottle exist, then per launcher: executable bit, script syntax (`zsh -n`), whether the script predates the `command -v whisky` fallback fix, `Info.plist` validity, and reads back the real signature/registration state after attempting to fix it. Mechanical issues (permissions, signature, registration) get auto-fixed; anything else (bad syntax, a stale pre-fix script, a broken plist, a missing bottle) is flagged with a pointer back to Step 11 instead of being silently guessed at.
+
+### Fixed
+- Symptom: testing the new diagnostic loop against all three launchers showed a stray line like `exe_name=uaro-patcher` printed to output before the second and third launcher's checks — looked like a leaked debug print, though the checks themselves still ran against the correct files each time.
+- Root cause: `local exe_name plist="..."` was declared fresh on every loop iteration. zsh's `local`/`typeset`, when given a bare variable name (no `=`) that already holds a value from a prior declaration in the same scope, prints `name=value` as a query instead of silently redeclaring it — confirmed by isolating the exact pattern in a standalone repro before touching the real script.
+- Fix: declare `local exe_name` once, before the loop, and assign it via the `case` statement only (no `local` keyword) on each iteration. Verified clean output across all three launchers afterward, then separately verified the auto-fix path itself by deliberately `chmod -x`-ing a launcher's executable, running `uaro-cli repair`, and confirming both the `[FIXED]` line and the actual restored executable bit on disk.
+
 ## [0.5.0] - 2026-07-27
 
 ### Added

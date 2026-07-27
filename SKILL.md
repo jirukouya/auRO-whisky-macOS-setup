@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.5.0
+version: 0.6.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -861,7 +861,9 @@ done
 
 ## Optional: uaro-cli command-line helper
 
-A small convenience wrapper around three operations this file otherwise documents doing by hand: force-quitting stuck processes, launching the game, and re-signing/re-registering the launcher bundles after an edit. Purely optional — the game works fully without it — but cheap to build, since it just calls the same commands Step 11 and this section already use elsewhere in this file, with no new risk of its own (unlike `UaRO Game.app`, it has no accepted trade-off). Build it as part of Step 11, right after the three launcher bundles are signed and registered.
+A small convenience wrapper around three operations this file otherwise documents doing by hand: force-quitting stuck processes, launching the game, and diagnosing/repairing the launcher bundles. Purely optional — the game works fully without it — but cheap to build, since it just calls the same commands Step 11 and this section already use elsewhere in this file, with no new risk of its own (unlike `UaRO Game.app`, it has no accepted trade-off). Build it as part of Step 11, right after the three launcher bundles are signed and registered.
+
+`repair` specifically **diagnoses before it fixes**, rather than blindly re-running codesign/lsregister regardless of whether anything was actually wrong: it checks the game install and bottle exist, then per launcher checks the executable bit, script syntax, whether the script predates the `command -v whisky` fallback fix, `Info.plist` validity, and reads back the actual signature/registration state after attempting to fix them. Only the mechanical stuff (permissions, signature, registration) gets auto-fixed — anything else (bad syntax, a stale pre-fix script, a broken plist, a missing bottle) just gets flagged with a pointer back to Step 11, since rewriting script *content* automatically is a different (and riskier) kind of operation than the reversible, idempotent fixes this tool is meant for.
 
 **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk**, same as the launcher scripts above — this script has no shell variables to fall back on once installed.
 
@@ -881,7 +883,12 @@ uaro-cli — command-line helper for the uaRO Whisky install
 Usage:
   uaro-cli kill      Force-quit any running uaRO/Wine processes for this bottle
   uaro-cli launch    Launch the game (same as double-clicking UaRO Patcher.app)
-  uaro-cli repair    Re-sign and re-register all installed launcher .app bundles
+  uaro-cli repair    Diagnose all installed launcher .app bundles, auto-fix what's
+                      safely fixable (missing executable bit, stale signature,
+                      missing Launch Services registration), and flag anything
+                      else (bad script syntax, a pre-fix launcher, a broken
+                      Info.plist, a missing bottle/game install) for a Step 11
+                      rebuild instead of guessing at it
 EOF
 }
 
@@ -899,17 +906,98 @@ cmd_launch() {
 }
 
 cmd_repair() {
-    local any=0
-    for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
-        [[ -d "/Applications/$APP" ]] || continue
-        any=1
-        codesign --force --deep --sign - "/Applications/$APP"
-        "$LSREGISTER" -f "/Applications/$APP"
-    done
-    if [[ $any -eq 0 ]]; then
-        echo "No launcher apps found in /Applications — nothing to repair."
+    local problems=0
+
+    echo "-- Game install --"
+    if [[ -f "$GAME_DIR/uaRO.exe" ]]; then
+        echo "[OK]   uaRO.exe found at \$GAME_DIR"
     else
-        echo "Re-signed and re-registered all installed launcher apps."
+        echo "[WARN] uaRO.exe not found at $GAME_DIR -- game isn't actually installed there"
+        problems=$((problems + 1))
+    fi
+
+    if "$WHISKY" list 2>/dev/null | grep -q "$BOTTLE_NAME"; then
+        echo "[OK]   Bottle '$BOTTLE_NAME' exists"
+    else
+        echo "[WARN] Bottle '$BOTTLE_NAME' not found via 'whisky list' -- launchers will fail until it's recreated (Step 5)"
+        problems=$((problems + 1))
+    fi
+
+    local any=0
+    local exe_name
+    for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+        local bundle="/Applications/$APP"
+        [[ -d "$bundle" ]] || { echo "-- $APP -- [--] not installed, skipping"; continue; }
+        any=1
+        echo "-- $APP --"
+
+        local plist="$bundle/Contents/Info.plist"
+        case "$APP" in
+            "UaRO Patcher.app")  exe_name="uaro-patcher" ;;
+            "UaRO Settings.app") exe_name="uaro-settings" ;;
+            "UaRO Game.app")     exe_name="uaro-game" ;;
+        esac
+        local exe="$bundle/Contents/MacOS/$exe_name"
+
+        if [[ ! -f "$exe" ]]; then
+            echo "[WARN] $exe missing entirely -- rebuild this launcher per SKILL.md Step 11"
+            problems=$((problems + 1))
+            continue
+        fi
+
+        if [[ -x "$exe" ]]; then
+            echo "[OK]   Executable bit set"
+        else
+            chmod +x "$exe" 2>/dev/null || true
+            echo "[FIXED] Executable bit was missing -- restored"
+        fi
+
+        if zsh -n "$exe" 2>/dev/null; then
+            echo "[OK]   Script syntax valid"
+        else
+            echo "[WARN] Script has a syntax error -- rebuild this launcher per SKILL.md Step 11"
+            problems=$((problems + 1))
+        fi
+
+        if grep -q 'command -v whisky' "$exe" 2>/dev/null; then
+            echo "[OK]   Uses the command -v whisky fallback (not hardcoded to one path)"
+        else
+            echo "[WARN] Predates the command -v whisky fallback fix -- rebuild per SKILL.md Step 11"
+            problems=$((problems + 1))
+        fi
+
+        if plutil -lint "$plist" >/dev/null 2>&1; then
+            echo "[OK]   Info.plist valid"
+        else
+            echo "[WARN] Info.plist invalid -- rebuild this launcher per SKILL.md Step 11"
+            problems=$((problems + 1))
+        fi
+
+        codesign --force --deep --sign - "$bundle" >/dev/null 2>&1 || true
+        if codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
+            echo "[WARN] Still unsigned after a re-sign attempt"
+            problems=$((problems + 1))
+        else
+            echo "[OK]   Signature valid (re-signed)"
+        fi
+
+        "$LSREGISTER" -f "$bundle" >/dev/null 2>&1 || true
+        local suffix="${exe_name#uaro-}"
+        if "$LSREGISTER" -dump 2>/dev/null | grep -q "identifier:.*com.uaro.$suffix"; then
+            echo "[OK]   Registered with Launch Services"
+        else
+            echo "[WARN] Not showing up in Launch Services registration"
+            problems=$((problems + 1))
+        fi
+    done
+
+    echo "----------------------------------"
+    if [[ $any -eq 0 ]]; then
+        echo "No launcher apps found in /Applications -- nothing to check."
+    elif [[ $problems -eq 0 ]]; then
+        echo "All checks passed."
+    else
+        echo "$problems issue(s) found -- see [WARN] lines above; most point at rebuilding via SKILL.md Step 11, since repair only auto-fixes mechanical issues (permissions/signature/registration), not script content."
     fi
 }
 
@@ -937,7 +1025,16 @@ zsh -n /opt/homebrew/bin/uaro-cli   # syntax check
 command -v uaro-cli                 # should resolve to /opt/homebrew/bin/uaro-cli
 uaro-cli                            # no args -> prints usage, doesn't error
 uaro-cli kill                       # safe even with nothing running -- confirm it prints the "Killed..." line, not an error
-uaro-cli repair                     # safe/idempotent -- confirm it re-signs+re-registers without error
+uaro-cli repair                     # safe/idempotent -- confirm every line reads [OK], ending in "All checks passed."
+```
+
+**Prove `repair`'s diagnosis actually works, don't just trust a clean first run** — deliberately break something reversible, confirm `repair` both detects and fixes it, then confirm the underlying state is genuinely restored (not just repair's own say-so):
+
+```bash
+chmod -x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"
+uaro-cli repair
+# Expect: "[FIXED] Executable bit was missing -- restored", ending in "All checks passed."
+test -x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher" && echo "confirmed executable again"
 ```
 
 **Standing rule, same as the three launcher scripts:** if `BOTTLE_NAME`, `GAME_DIR`, or the set of process names killed on relaunch ever changes, update this script too — it's a fourth copy of that same logic, not exempt from the "keep all launcher-adjacent scripts in sync" rule in Step 11.
