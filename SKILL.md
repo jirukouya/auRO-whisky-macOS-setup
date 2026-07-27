@@ -1,7 +1,7 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.2.1
-description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
+version: 0.4.0
+description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
 # uaRO on macOS via Whisky — Full Install Skill
@@ -27,15 +27,15 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 [Step 6 — Download & extract installer](#step-6--download--extract-the-uaro-installer) ·
 [Step 7 — Run the installer](#step-7--run-the-installer) ·
 [Step 8 — FCOM byte-patches](#step-8--patch-setupexe-fcom-byte-patches-two-sites) ·
-[Step 9 — Wine Gecko pre-install](#step-9--pre-install-wine-gecko-mandatory-before-uaroapp-is-ever-launched) ·
+[Step 9 — Wine Gecko pre-install](#step-9--pre-install-wine-gecko-mandatory-before-uaro-patcherapp-is-ever-launched) ·
 [Step 9b — Fix menu-shortcut keybinds](#step-9b--fix-in-game-menu-shortcuts-cmdacmdz-style-not-registering) ·
 [Step 10 — Game config files](#step-10--write-game-config-files) ·
-[Step 11 — Launcher .app bundles](#step-11--build-the-two-launcher-app-bundles) ·
+[Step 11 — Launcher .app bundles](#step-11--build-the-three-launcher-app-bundles) ·
 [Step 12 — First-run verification](#step-12--first-run-verification-do-this-before-considering-the-install-done) ·
 [Installation complete](#installation-complete--post-this-once-step-12-passes)
 
 **Reference (consult as needed, not part of the linear install path):**
-[Known open issues](#known-open-issues) (tags: `Crash/Patcher`, `Crash/Gameplay`, `Input/Keyboard`) ·
+[Known open issues](#known-open-issues) (tags: `Crash/Patcher`, `Crash/Gameplay`, `Input/Keyboard`, `Installer/FCOM`) ·
 [Common Gotchas table](#common-gotchas-reference-table) (tags: `Install/Homebrew`, `Install/Download`, `Install/Installer`, `Bottle/Config`, `Runtime/Wine`, `Installer/FCOM`, `Config/Graphics`, `Launcher/Signing`, `Input/Keyboard`, `Crash/Gameplay`, `Tooling/Environment`) ·
 [Uninstall / rollback](#uninstall--rollback) ·
 [Credits & Disclaimer](#credits--disclaimer)
@@ -50,7 +50,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **`dd` writing to a binary file may be blocked in sandboxed/agent shells**, independent of file permissions. If it is, fall back to plain Python `open(path, 'r+b')` — it produces byte-identical results and isn't subject to the same restriction.
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
-- **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the two launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
+- **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the three launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
 - **Some steps may trigger a macOS admin/login password prompt (`sudo`) — expected, not a sign of a hijacked machine.** Homebrew's installer (Step 1) commonly needs it the first time it creates `/opt/homebrew`; Rosetta (Step 2) occasionally does too. Warn the user *before* running that command that a password prompt may appear. If the shell running these commands has no interactive terminal attached, the prompt can't be answered programmatically at all — it will hang or fail outright (`sudo: a password is required`) instead of actually showing a box to type into. If that happens, tell the user to open a normal Terminal window themselves and run that one command directly — only they should ever type their own Mac password, never ask them to tell it to you.
 
 ## 1a. Progress table (post this, updated, after every single step)
@@ -138,8 +138,10 @@ Two independent things to check here:
 
 - **`$EDITMENU` has any output at all (even an empty value)** → this bottle has the *old*, superseded version of Step 9b applied (the one that disabled the hidden Edit menu). Tell the user plainly: *"Heads up — this uaRO install has an older fix applied that trades away native Cmd+V paste. There's a better fix now that doesn't have that trade-off. Want me to switch it over? Requires fully closing the game first."* If yes, apply the migration + current Step 9b.
 - **`$OPTALT` is empty** → Step 9b (current version) was never applied at all. Tell the user plainly, even if they never mentioned a keybind problem: *"Heads up — this uaRO install was set up before a keybind fix was added to this skill. In-game menu shortcuts (like opening the item window) probably don't work correctly right now. Want me to apply that fix now? It's quick, but does require fully closing the game first."* Apply Step 9b if they say yes, then continue with whatever else this run was for.
-- **If `/Applications/UaRO.app/Contents/MacOS/uaro-launch` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO.app/Contents/MacOS/uaro-launch"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
-- **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launcher too (see Step 11's standing rule on this) before moving on.
+- **If `/Applications/UaRO.app` exists (old name, pre-2026-07-27)**, rename it to `UaRO Patcher.app` per Step 11's current naming, updating `Info.plist` (`CFBundleName`/`CFBundleDisplayName`/`CFBundleIdentifier`/`CFBundleExecutable`) and the script filename (`uaro-launch` → `uaro-patcher`) to match, then re-sign and re-register — don't leave an install half-migrated with the old bundle name but new internal content.
+- **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
+- **If `/Applications/UaRO Game.app` is missing (install predates 2026-07-27)**, offer to add it per Step 11's current version: *"There's now a third launcher option, `UaRO Game`, that skips the patcher for a faster relaunch — it comes with a real trade-off (see Step 11/Known open issues) I want you to be aware of before I add it. Want me to build it?"* Only build it if the user says yes — don't add it silently, since accepting its risk is the user's call, not a default.
+- **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launchers too (see Step 11's standing rule on this) before moving on.
 
 Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
 
@@ -399,6 +401,11 @@ This is not paranoia — on a real run, files extracted to `~/Downloads` passed 
 
 ```bash
 eval "$(whisky shellenv "$BOTTLE_NAME")"
+# Note: this sed doubles each backslash (\\ per separator, not a single \) --
+# looks odd but is intentional/verified-safe: Windows path parsing collapses
+# redundant separators, and this exact form was confirmed working end-to-end
+# on a real install (Step 7's own landed-where-asked check afterward is the
+# actual safety net regardless).
 WIN_DEST="Z:$(printf '%s' "$GAME_DIR" | sed 's:/:\\\\:g')"
 nohup caffeinate -i wine64 ~/Games/UaRO_Setup/UaRO_Setup.exe "/DIR=$WIN_DEST" >/tmp/uaro_installer.log 2>&1 &
 disown
@@ -467,7 +474,7 @@ ls -la "$SETUP" "$SETUP.orig-backup"   # sizes must match exactly
 
 **If setup.exe crashes at a different `0042xxxx` address:** subtract the PE ImageBase `0x400000` to get the file offset. `0x0042C0CD` → Site A, `0x00421E39` → Site B. Any other address is an uncatalogued third site from a newer installer build — dump 16 bytes around it (`xxd -s $((0xOFFSET - 8)) -l 16 setup.exe`) and treat it as a new finding, don't assume the two offsets above are permanent across future uaRO releases.
 
-## Step 9 — Pre-install Wine Gecko (mandatory, before `UaRO.app` is ever launched)
+## Step 9 — Pre-install Wine Gecko (mandatory, before `UaRO Patcher.app` is ever launched)
 
 Do this right after Step 8, before the patcher is run for the first time. **This is a hard functional dependency, not a cosmetic prompt.** `UaRo Patcher.exe`'s initial patch-check runs through an embedded HTML/browser control — without Gecko it sits stuck at "Getting patch_main.txt..." forever, with a blank white panel and a progress bar that never moves.
 
@@ -619,47 +626,50 @@ python3 -c "print(repr(open('$GAME_DIR/savedata/OptionInfo.lua','rb').read()))" 
 
 **Width/height set here are provisional.** RO OpenSetup's own GUI is the authoritative writer for resolution (its dropdown only offers a fixed list of scaled values tied to the real display, and hand-edited values here won't necessarily match what it shows). Treat the values above as a reasonable starting guess; Step 12 will overwrite them correctly via the app's own Apply flow.
 
-## Step 11 — Build the two launcher .app bundles
+## Step 11 — Build the three launcher .app bundles
 
-`UaRO.app` runs the patcher for daily play. `UaRO Settings.app` re-patches `setup.exe` then runs it, for graphics config — **players must never use the patcher's own in-app "Settings" button**, since `UaRo Patcher.exe` re-downloads any file whose hash mismatches its manifest, including the patched `setup.exe`, and the patcher's own Settings button runs the (by-then-unpatched) file directly.
+`UaRO Patcher.app` runs the patcher for daily play. `UaRO Settings.app` re-patches `setup.exe` then runs it, for graphics config — **players must never use the patcher's own in-app "Settings" button**, since `UaRo Patcher.exe` re-downloads any file whose hash mismatches its manifest, including the patched `setup.exe`, and the patcher's own Settings button runs the (by-then-unpatched) file directly. `UaRO Game.app` skips the patcher entirely and launches `uaRO.exe` directly — see its own section below for what this trades away.
 
-**Standing rule, not just for this initial build: any future fix that touches one launcher's script content (`uaro-launch` or `uaro-settings`) must be applied to both**, unless the fix is genuinely specific to one (e.g. the crash-dialog mitigation only applies to `uaro-launch`, since only it runs the patcher). Whenever either script is edited after this initial build — including by Step 2a's healing checks, or by any later session — **re-sign the bundle afterward** (see the `codesign` step below); an unsigned or stale-signed bundle after edits is the kind of thing that works today and silently breaks on a future macOS update.
+**Naming note:** the patcher launcher was named plain `UaRO.app` before 2026-07-27 — it was renamed to `UaRO Patcher.app` (bundle, `Info.plist` fields, and script filename `uaro-launch` → `uaro-patcher`) so all three launchers' names describe what each one actually does, rather than one being unlabeled. See Step 2a for the migration check on existing installs still carrying the old name.
+
+**Standing rule, not just for this initial build: any future fix that touches one launcher's script content (`uaro-patcher`, `uaro-settings`, or `uaro-game`) must be applied to all three where it's actually relevant**, unless the fix is genuinely specific to one (e.g. the crash-dialog mitigation and the patch-check both only apply to `uaro-patcher`, since only it runs the patcher). Whenever any of the three scripts is edited after this initial build — including by Step 2a's healing checks, or by any later session — **re-sign that bundle afterward** (see the `codesign` step below); an unsigned or stale-signed bundle after edits is the kind of thing that works today and silently breaks on a future macOS update.
 
 ```bash
-for APP in "UaRO.app" "UaRO Settings.app"; do
+for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
   mkdir -p "/Applications/$APP/Contents/MacOS"
 done
 ```
 
-`Info.plist` (parameterize `name`/`identifier`/`executable` per bundle — shown for `UaRO.app`; mirror for `UaRO Settings.app` with `CFBundleName=UaRO Settings`, `CFBundleIdentifier=com.uaro.settings`, `CFBundleExecutable=uaro-settings`):
+`Info.plist` (parameterize `name`/`display name`/`identifier`/`executable` per bundle — shown for `UaRO Patcher.app`; mirror for `UaRO Settings.app` with `CFBundleName=UaRO Settings`, `CFBundleDisplayName=UaRO Settings`, `CFBundleIdentifier=com.uaro.settings`, `CFBundleExecutable=uaro-settings`; mirror for `UaRO Game.app` with `CFBundleName=UaRO Game`, `CFBundleDisplayName=UaRO Game`, `CFBundleIdentifier=com.uaro.game`, `CFBundleExecutable=uaro-game`). **Don't forget `CFBundleDisplayName` when mirroring** — it's easy to update `CFBundleName` and miss its sibling, leaving all three bundles displaying "UaRO Patcher" in Finder/Get Info regardless of which one is actually open:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key><string>UaRO</string>
-	<key>CFBundleDisplayName</key><string>UaRO</string>
-	<key>CFBundleIdentifier</key><string>com.uaro.launcher</string>
+	<key>CFBundleName</key><string>UaRO Patcher</string>
+	<key>CFBundleDisplayName</key><string>UaRO Patcher</string>
+	<key>CFBundleIdentifier</key><string>com.uaro.patcher</string>
 	<key>CFBundleVersion</key><string>1.0</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleIconFile</key><string>AppIcon.icns</string>
-	<key>CFBundleExecutable</key><string>uaro-launch</string>
+	<key>CFBundleExecutable</key><string>uaro-patcher</string>
 	<key>LSMinimumSystemVersion</key><string>11.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 ```
 
-Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), both apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
+Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), all three apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
 
-`UaRO.app/Contents/MacOS/uaro-launch` — **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk; the app has no shell variables to fall back on when the user later double-clicks it:**
+`UaRO Patcher.app/Contents/MacOS/uaro-patcher` — **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk; the app has no shell variables to fall back on when the user later double-clicks it:**
 
 ```bash
 #!/bin/zsh
 set -e
-eval "$(/opt/homebrew/bin/whisky shellenv <BOTTLE_NAME>)"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv <BOTTLE_NAME>)"
 cd "<GAME_DIR>"
 
 # Clear out any stale Wine processes from a previous session that didn't fully
@@ -712,10 +722,11 @@ exit $code
 ```bash
 #!/bin/zsh
 set -e
-eval "$(/opt/homebrew/bin/whisky shellenv <BOTTLE_NAME>)"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv <BOTTLE_NAME>)"
 cd "<GAME_DIR>"
 
-# Same stale-process cleanup as uaro-launch -- see the comment there for why.
+# Same stale-process cleanup as uaro-patcher -- see the comment there for why.
 wineserver -k >/dev/null 2>&1 || true
 pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
 pkill -f "uaRO.exe" >/dev/null 2>&1 || true
@@ -739,9 +750,34 @@ _patch_setup_exe
 exec wine64 "setup.exe" >/dev/null 2>&1
 ```
 
+`UaRO Game.app/Contents/MacOS/uaro-game` — same header and stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
+
+```bash
+#!/bin/zsh
+set -e
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv <BOTTLE_NAME>)"
+cd "<GAME_DIR>"
+
+# Same stale-process cleanup as uaro-patcher/uaro-settings -- see those scripts for why.
+wineserver -k >/dev/null 2>&1 || true
+pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
+pkill -f "uaRO.exe" >/dev/null 2>&1 || true
+sleep 1
+
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
+export WINE_CPU_TOPOLOGY=4:0,1,2,3
+
+wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
+
+exec wine64 "uaRO.exe"
+```
+
+**Known, unresolved risk — read before relying on this for real play.** `UaRO Game.app` never talks to the patcher, so it never checks for or downloads new patches. Confirmed (2026-07-27, one real machine) that this launches cleanly, produces a stable process tree, and reaches a working login on a bottle that was already fully up to date — **but there is no known way to verify whether `uaRO.exe` enforces its own version check.** If the server ships a new patch and this bottle hasn't run `UaRO Patcher.app` since, this script has no way of detecting that and will silently launch whatever's already on disk, which could be a stale client. This has not been tested across an actual patch cycle. **Recommended use:** run `UaRO Patcher.app` at least once per session (or whenever a patch is known to have shipped), and treat `UaRO Game.app` as a faster relaunch option in between — not a permanent replacement for the patcher. See *Known open issues* for the formal writeup of this risk.
+
 ### App icon (extract from the game's own files — do not fabricate/download one)
 
-The game already ships a usable icon; the two launcher `.app`s just need it pulled out and converted. Requires `icoutils` (`brew install icoutils`, gives `wrestool`/`icotool`):
+The game already ships a usable icon; all three launcher `.app`s just need it pulled out and converted. Requires `icoutils` (`brew install icoutils`, gives `wrestool`/`icotool`):
 
 ```bash
 brew install icoutils   # idempotent if already present
@@ -772,35 +808,39 @@ for spec in "16 16" "32 16@2x" "32 32" "64 32@2x" "128 128" "256 128@2x" "256 25
 done
 iconutil -c icns UaRO.iconset -o AppIcon.icns
 
-for APP in "UaRO.app" "UaRO Settings.app"; do
+for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
 	mkdir -p "/Applications/$APP/Contents/Resources"
 	cp AppIcon.icns "/Applications/$APP/Contents/Resources/AppIcon.icns"
 done
 ```
 
-The source PNG is only 48×48 (nothing higher-res is embedded anywhere in the game files), so `sips` is upscaling for the 256/512/1024 tiers — it'll look a little soft at the largest Launchpad/Finder preview sizes, but is fine for a desktop shortcut. This step can run any time after `$GAME_DIR` is populated (Step 6 onward) and before the final `lsregister -f` below, since that call is what makes Launch Services notice the new icon — if the two apps were already registered without an icon, re-run `lsregister -f` plus `killall Dock; killall Finder` to bust the icon cache after adding it later.
+The source PNG is only 48×48 (nothing higher-res is embedded anywhere in the game files), so `sips` is upscaling for the 256/512/1024 tiers — it'll look a little soft at the largest Launchpad/Finder preview sizes, but is fine for a desktop shortcut. This step can run any time after `$GAME_DIR` is populated (Step 6 onward) and before the final `lsregister -f` below, since that call is what makes Launch Services notice the new icon — if the apps were already registered without an icon, re-run `lsregister -f` plus `killall Dock; killall Finder` to bust the icon cache after adding it later.
 
 ```bash
-chmod +x "/Applications/UaRO.app/Contents/MacOS/uaro-launch" "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"
-plutil -lint "/Applications/UaRO.app/Contents/Info.plist" "/Applications/UaRO Settings.app/Contents/Info.plist"
-zsh -n "/Applications/UaRO.app/Contents/MacOS/uaro-launch"
+chmod +x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher" "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
+plutil -lint "/Applications/UaRO Patcher.app/Contents/Info.plist" "/Applications/UaRO Settings.app/Contents/Info.plist" "/Applications/UaRO Game.app/Contents/Info.plist"
+zsh -n "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"
 zsh -n "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"
+zsh -n "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
 
-# Ad-hoc re-sign both bundles -- a freshly-built, never-signed bundle usually still
+# Ad-hoc re-sign all three bundles -- a freshly-built, never-signed bundle usually still
 # launches fine locally (no quarantine attribute to trigger a strict Gatekeeper
-# check), but that's a latent gap, not a guarantee: any future edit to either
+# check), but that's a latent gap, not a guarantee: any future edit to any
 # bundle's contents (this step, Step 2a's healing checks, or a later session)
 # should re-run this same codesign call afterward, not just the first build.
-codesign --force --deep --sign - "/Applications/UaRO.app"
+codesign --force --deep --sign - "/Applications/UaRO Patcher.app"
 codesign --force --deep --sign - "/Applications/UaRO Settings.app"
+codesign --force --deep --sign - "/Applications/UaRO Game.app"
 
 # Backup copies inside the game folder, per the original design intent
-cp -R "/Applications/UaRO.app" "$GAME_DIR/UaRO.app"
+cp -R "/Applications/UaRO Patcher.app" "$GAME_DIR/UaRO Patcher.app"
 cp -R "/Applications/UaRO Settings.app" "$GAME_DIR/UaRO Settings.app"
+cp -R "/Applications/UaRO Game.app" "$GAME_DIR/UaRO Game.app"
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-"$LSREGISTER" -f "/Applications/UaRO.app"
+"$LSREGISTER" -f "/Applications/UaRO Patcher.app"
 "$LSREGISTER" -f "/Applications/UaRO Settings.app"
+"$LSREGISTER" -f "/Applications/UaRO Game.app"
 ```
 
 **MANDATORY registration verification — never `mdls`/`mdfind`, Spotlight lags well behind actual registration and will falsely report nothing for a while:**
@@ -812,7 +852,7 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 **MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
 
 ```bash
-for APP in "/Applications/UaRO.app" "/Applications/UaRO Settings.app"; do
+for APP in "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app"; do
   codesign -dv "$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
 done
 ```
@@ -821,9 +861,10 @@ done
 
 1. Open `UaRO Settings.app`. Confirm it runs the FCOM re-patch without error, then opens "RO OpenSetup" with no crash. In its Resolution dropdown, pick the closest same-aspect-ratio entry to what the user actually wants (there is no guarantee the exact requested pixel value is offered). Click **Apply**, then **OK**.
 2. Confirm the round-trip: `grep -E "WIDTH|HEIGHT|OLD_WIDTH|OLD_HEIGHT" "$GAME_DIR/savedata/OptionInfo.lua"` should now show the GUI's chosen values in `WIDTH`/`HEIGHT` and the previous values preserved in `OLD_WIDTH`/`OLD_HEIGHT`.
-3. Open `UaRO.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
+3. Open `UaRO Patcher.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
 4. Tell the user: **never use the patcher's own in-app Settings button** — always use `UaRO Settings.app` for graphics/resolution changes, since the patcher will silently re-download an unpatched `setup.exe` over time.
 5. Tell the user: **the game's `Alt` key is the Mac's `Option` (⌥) key** — the keyboard has no key actually labeled "Alt," and it's `Option`, not `Command`, that Step 9b maps to it. Any in-game shortcut described as `Alt+<letter>` (e.g. opening the item window) means physically pressing `Option+<letter>`.
+6. Tell the user about `UaRO Game.app`: it's a faster relaunch option that skips the patcher's update check entirely — see the risk note in Step 11 and *Known open issues* before treating it as a full replacement for `UaRO Patcher.app`.
 
 ## Installation complete — post this once Step 12 passes
 
@@ -835,12 +876,13 @@ This is the payoff moment after a long, mostly-invisible process — post it pla
 
 Then walk the user through these four points, every time, regardless of how the install went:
 
-1. **To play** — open `UaRO.app` in `/Applications` (Launchpad/Spotlight also work).
+1. **To play** — open `UaRO Patcher.app` in `/Applications` (Launchpad/Spotlight also work).
 2. **To change any game setting** (resolution, graphics device, etc.) — always through `/Applications/UaRO Settings.app`. Never the patcher's own in-app Settings button — see item 4 above for why.
-3. **A "Program Error" popup shouldn't appear anymore** — the launcher now silently retries once instead of showing it (see *Known open issues* below for the underlying, still-not-root-caused bug this papers over). If it somehow still appears twice in a row, that's the retry also failing; don't panic, just relaunch `UaRO.app` manually.
+3. **A "Program Error" popup shouldn't appear anymore** — the launcher now silently retries once instead of showing it (see *Known open issues* below for the underlying, still-not-root-caused bug this papers over). If it somehow still appears twice in a row, that's the retry also failing; don't panic, just relaunch `UaRO Patcher.app` manually.
 4. **To uninstall uaRO entirely** — just invoke this skill again and ask for uninstall; the *Uninstall / rollback* section below has the exact commands, no need to figure it out manually.
 5. **In-game menu shortcuts use `Option`, not `Command`** (e.g. `Option+A` for the item window) — this matches how uaRO behaves in a Windows VM too. Copy/paste (`Cmd+C`/`Cmd+V`) work normally, no change there.
 6. **Switch to an English/ABC input source before playing** — if the Mac's active keyboard input method is Chinese, Japanese, Korean, Thai, or another non-ASCII input source, number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) won't register at all, and rebinding one will show "Unspecified value" instead. See *Known open issues* if English keeps silently reverting back specifically on the game window.
+7. **`UaRO Game.app` skips the patcher — use it as a quick relaunch shortcut, not a permanent replacement.** It launches the game directly with no update check at all. Run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped, so this bottle actually gets it. See *Known open issues* for the unresolved risk this carries.
 
 ## Known open issues
 
@@ -852,7 +894,7 @@ Then walk the user through these four points, every time, regardless of how the 
 
 **More precise trigger sequence, captured with `WINEDEBUG=+seh,+exception` against a live reproduction:** immediately before the crash, the patcher's embedded HTML update-check page sets a CSS `animation-delay` style, then its JS engine tries to transition script state and hits `jscript:JScript_SetScriptState unimplemented state 3` — a real Wine gap, but not fatal by itself. Right after that, the same `int 3` fires at the same address (`uaro patcher+0xa059`) as before. The trace shows the process's *own* exception handlers (`call_vectored_handlers`, then `call_handler`) genuinely get invoked and return normally — strongly suggesting this is Gepard Shield's own anti-debug self-check (deliberately tripping a breakpoint and expecting its own handler to silently absorb it, as proof no external debugger is attached). Despite the handler chain running and returning, Wine's exception dispatcher still treats it as unhandled afterward and launches `winedbg`, popping the "Program Error" dialog — so this looks like a **false crash**: the game's own code isn't actually broken, but something in Wine's SEH bookkeeping fails to register the handler's return as "handled."
 
-**Mitigated (not fixed) as of Step 11's launcher script:** `UaRO.app` now sets `ShowCrashDialog=0` and wraps the patcher launch in a bounded (max one retry) watchdog loop, so this class of glitch — which has not reliably repeated on a second launch — gets silently retried instead of popping the alarming dialog. This doesn't touch the actual root cause above; it just stops the false crash from being disruptive. If it does repeat consistently (i.e. the retry also fails) and someone wants to dig into the real root cause:
+**Mitigated (not fixed) as of Step 11's launcher script:** `UaRO Patcher.app` now sets `ShowCrashDialog=0` and wraps the patcher launch in a bounded (max one retry) watchdog loop, so this class of glitch — which has not reliably repeated on a second launch — gets silently retried instead of popping the alarming dialog. This doesn't touch the actual root cause above; it just stops the false crash from being disruptive. If it does repeat consistently (i.e. the retry also fails) and someone wants to dig into the real root cause:
 - The `WINEDEBUG=+seh,+exception` capture described above is already done — re-run it (`wine64 "UaRo Patcher.exe"` from `$GAME_DIR`, in the background per Step 9's pattern) to get a fresh trace rather than starting from scratch.
 - Look specifically at how Wine's ntdll exception dispatch (`call_vectored_handlers`/`call_handler`/`call_stack_handlers`) decides an exception is still "unhandled" even after a handler runs and returns — that's where the disconnect appears to be, based on the trace above.
 - Check Wine/Whisky issue trackers for Gepard/anti-debug `int3` self-check reports specifically (not just generic Gecko crash reports) — the trigger looks anti-debug-related, not a Gecko rendering bug.
@@ -882,6 +924,12 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 **Number-row hotkeys (Skill Bar / Hotkey Bar) silently do nothing under a non-English input source.** **Category: Input/Keyboard** If the Mac's active keyboard input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method, the number-row keys (`1`-`9`) get intercepted system-wide for candidate-word selection before Wine or the game ever sees them — letter keys and `Option`-modified shortcuts are unaffected, only bare number keys. Symptoms: in-game number-key hotkeys do nothing at all, and trying to rebind one (Shortcut Settings) shows the pressed key as "Unspecified value" instead of registering it. This has nothing to do with Step 9b's Option/Alt fix — confirmed by testing with that fix's registry keys removed entirely, with no change in this symptom.
 
 **Fix:** switch the Mac's input source to English/ABC before playing. **Known complication:** if macOS's *"Automatically switch to a document's input source"* setting (System Settings → Keyboard → Input Sources) is on, macOS remembers a separate input source *per window*, so it can silently switch the uaRO game window back to whatever it was last used with (Chinese, etc.) the moment that window regains focus — even if the input source was manually set to English right before switching to it. If English keeps reverting specifically when the game window comes to the front, either turn that setting off (system-wide effect, simplest fix), or manually re-select English a few times while the game window itself is focused so macOS re-learns English as that window's own remembered source.
+
+**`UaRO Game.app` (skip-patcher launch) cannot detect a stale/unpatched game client (unresolved).** **Category: Installer/FCOM** `UaRO Game.app` launches `uaRO.exe` directly, bypassing `UaRo Patcher.exe` entirely — it never checks for or downloads new patches. Confirmed (2026-07-27, one real machine) that this launches cleanly, produces a stable process tree (no crash, no error in the Wine log, `game_crash_log.txt` unchanged), and reaches a working login — but only tested on a bottle that was already fully up to date at the time.
+
+**What's not known:** whether `uaRO.exe` itself enforces any server-side version check that would refuse to connect (or visibly warn) on a stale client. If it doesn't, using `UaRO Game.app` after a server-side patch ships — without having run `UaRO Patcher.app` since — will silently launch whatever's on disk, with no error at all, rather than either updating or refusing to start. This has not been tested across an actual patch cycle; it's a real, accepted risk of this launcher's design, not a hypothetical.
+
+**Mitigation, not a fix:** run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped. Treat `UaRO Game.app` purely as a faster relaunch option in between, never as a substitute for periodically running the patcher. To actually root-cause this: reproduce a real patch cycle (a patch shipping server-side while this bottle is on the previous version) and observe whether `uaRO.exe`, launched directly, refuses to connect, warns, or connects silently on the old version.
 
 ## Common Gotchas (reference table)
 
@@ -914,10 +962,11 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 | Bottle/Config | Launcher errors "a bottle with that name does not exist" | Hardcoded bottle name doesn't match the real one | Resolve the actual bottle name/UUID dynamically, don't hardcode across machines |
 | Runtime/Wine | Patcher stuck forever at "Getting patch_main.txt...", blank white panel | Wine Gecko not installed — this is a hard dependency, not cosmetic | Pre-install via `winetricks -q gecko` (Step 9) before ever launching the patcher |
 | Runtime/Wine | Wine Gecko Installer prompt never reappears, patcher permanently stuck | Clicking **Cancel** instead of Install appears to make Wine remember the decision and never re-prompt | Always click **Install**; better yet, pre-install non-interactively so the prompt never appears live |
-| Launcher/Signing | "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-launch` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
+| Launcher/Signing | "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-patcher` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
 | Input/Keyboard | `Cmd+A`/`Cmd+Z` (or other Alt-style menu shortcuts) do nothing in-game, but `Cmd+C`/`Cmd+V`/other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts `Cmd+A`/`Cmd+Z`/`Cmd+C`/`Cmd+X`/`Cmd+V` before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Apply Step 9b: set `LeftOptionIsAlt`/`RightOptionIsAlt`, then use `Option+<letter>` in-game instead of `Cmd+<letter>` for menu shortcuts — leaves `Cmd+C`/`Cmd+V` untouched, no trade-off |
 | Input/Keyboard | In-game paste needs `Ctrl+V` instead of `Cmd+V` (on a bottle set up with an earlier version of this skill) | An earlier version of Step 9b fixed the above by disabling the hidden Edit menu entirely — which fixed `Cmd+A`/`Cmd+Z` but broke `Cmd+V`'s automatic paste as a side effect | Undo it: `wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f`, then apply the current Step 9b (`LeftOptionIsAlt`/`RightOptionIsAlt`) instead — fixes both with no trade-off |
 | Input/Keyboard | Number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) do nothing, or rebinding one shows "Unspecified value", while letters and `Option`-shortcuts work fine | Mac's active input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method — it intercepts number keys system-wide for candidate selection before the game ever sees them; unrelated to Step 9b | Switch to an English/ABC input source before playing. If it keeps reverting specifically on the game window, check System Settings → Keyboard → Input Sources → *"Automatically switch to a document's input source"* — see *Known open issues* |
+| Installer/FCOM | Playing via `UaRO Game.app` for a while after a server-side patch, with no error or warning that anything's stale | `UaRO Game.app` skips the patcher entirely, so it never checks for or downloads new patches — whether the game client itself would refuse a stale version is unconfirmed | Run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped — see *Known open issues* for the unresolved risk |
 
 ## Uninstall / rollback
 
@@ -939,8 +988,8 @@ Everything else is safely re-derivable by re-running this skill. **Ask the user 
 ```bash
 # --- Level 1: game only ---
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-"$LSREGISTER" -u "/Applications/UaRO.app" "/Applications/UaRO Settings.app" 2>/dev/null
-rm -rf "/Applications/UaRO.app" "/Applications/UaRO Settings.app" "$GAME_DIR"
+"$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
+rm -rf "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" "$GAME_DIR"
 # Verify: neither app should resolve, and the game dir should be gone
 "$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
 test -d "$GAME_DIR" && echo "still there" || echo "removed"

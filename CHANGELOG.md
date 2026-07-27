@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-27
+
+### Added
+- New third launcher, `UaRO Game.app` — skips `UaRo Patcher.exe` entirely and launches `uaRO.exe` directly, for a faster relaunch. Confirmed on one real machine to launch cleanly and reach a working login, but only tested on a bottle already fully up to date.
+- Step 2a now offers to add `UaRO Game.app` to existing installs that predate this version, but only with explicit user consent — its risk is not something to accept on the user's behalf.
+
+### Known limitation (documented, not fixed)
+- `UaRO Game.app` has no way to detect whether the game client is stale relative to the server, since it never talks to the patcher. If a patch ships and this bottle hasn't run `UaRO Patcher.app` since, this launcher will silently launch whatever's on disk. See SKILL.md's Known open issues and Common Gotchas for the full writeup and the recommended mitigation (run the Patcher periodically).
+
+### Fixed
+- Cold-read review (fresh-agent pass with no prior context, same pattern as earlier cold-reads) caught real gaps introduced by this session's renaming/three-launcher work: two stale "two launcher(s)" wording leftovers, an incomplete `Info.plist` mirroring instruction that dropped `CFBundleDisplayName` (would leave all three bundles displaying "UaRO Patcher" in Finder regardless of which is open), and all three launcher scripts hardcoding `/opt/homebrew/bin/whisky` with no fallback for the case where Whisky was sideloaded via Step 3's GitHub-release fallback path (no `/opt/homebrew` symlink exists in that case) — now resolved via the same `command -v whisky || echo .../WhiskyCmd` pattern Step 3/5 already use.
+
+## [0.3.0] - 2026-07-27
+
+### Changed
+- Renamed the patcher launcher from plain `UaRO.app` to `UaRO Patcher.app` (bundle, `Info.plist` fields, and internal script `uaro-launch` → `uaro-patcher`), so its name describes what it actually does, matching `UaRO Settings.app`'s naming pattern. `UaRO Settings.app` itself is unchanged.
+- Added a Step 2a migration check: an existing install still carrying the old `UaRO.app` name gets renamed (bundle + `Info.plist` + script + re-sign + re-register) instead of being left half-migrated.
+
+### Added
+- Documented the migration path explicitly in Step 11's own notes, so a future edit to the launcher doesn't accidentally reintroduce the old name.
+
 ## [0.2.1] - 2026-07-27
 
 ### Changed
