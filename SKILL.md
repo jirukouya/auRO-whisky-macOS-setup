@@ -108,6 +108,7 @@ Two independent things to check here:
 - **`$EDITMENU` has any output at all (even an empty value)** → this bottle has the *old*, superseded version of Step 9b applied (the one that disabled the hidden Edit menu). Tell the user plainly: *"Heads up — this uaRO install has an older fix applied that trades away native Cmd+V paste. There's a better fix now that doesn't have that trade-off. Want me to switch it over? Requires fully closing the game first."* If yes, apply the migration + current Step 9b.
 - **`$OPTALT` is empty** → Step 9b (current version) was never applied at all. Tell the user plainly, even if they never mentioned a keybind problem: *"Heads up — this uaRO install was set up before a keybind fix was added to this skill. In-game menu shortcuts (like opening the item window) probably don't work correctly right now. Want me to apply that fix now? It's quick, but does require fully closing the game first."* Apply Step 9b if they say yes, then continue with whatever else this run was for.
 - **If `/Applications/UaRO.app/Contents/MacOS/uaro-launch` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO.app/Contents/MacOS/uaro-launch"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
+- **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launcher too (see Step 11's standing rule on this) before moving on.
 
 Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
 
@@ -558,6 +559,8 @@ python3 -c "print(repr(open('$GAME_DIR/savedata/OptionInfo.lua','rb').read()))" 
 
 `UaRO.app` runs the patcher for daily play. `UaRO Settings.app` re-patches `setup.exe` then runs it, for graphics config — **players must never use the patcher's own in-app "Settings" button**, since `UaRo Patcher.exe` re-downloads any file whose hash mismatches its manifest, including the patched `setup.exe`, and the patcher's own Settings button runs the (by-then-unpatched) file directly.
 
+**Standing rule, not just for this initial build: any future fix that touches one launcher's script content (`uaro-launch` or `uaro-settings`) must be applied to both**, unless the fix is genuinely specific to one (e.g. the crash-dialog mitigation only applies to `uaro-launch`, since only it runs the patcher). Whenever either script is edited after this initial build — including by Step 2a's healing checks, or by any later session — **re-sign the bundle afterward** (see the `codesign` step below); an unsigned or stale-signed bundle after edits is the kind of thing that works today and silently breaks on a future macOS update.
+
 ```bash
 for APP in "UaRO.app" "UaRO Settings.app"; do
   mkdir -p "/Applications/$APP/Contents/MacOS"
@@ -594,6 +597,16 @@ Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Res
 set -e
 eval "$(/opt/homebrew/bin/whisky shellenv <BOTTLE_NAME>)"
 cd "<GAME_DIR>"
+
+# Clear out any stale Wine processes from a previous session that didn't fully
+# close (crashed, force-quit, etc.) before starting a new one -- wineserver -k
+# only tears down the server for this bottle's own WINEPREFIX (already scoped
+# by the shellenv eval above), so this doesn't touch any other bottle.
+wineserver -k >/dev/null 2>&1 || true
+pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
+pkill -f "uaRO.exe" >/dev/null 2>&1 || true
+sleep 1
+
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
 export WINE_CPU_TOPOLOGY=4:0,1,2,3
 
@@ -637,6 +650,14 @@ exit $code
 set -e
 eval "$(/opt/homebrew/bin/whisky shellenv <BOTTLE_NAME>)"
 cd "<GAME_DIR>"
+
+# Same stale-process cleanup as uaro-launch -- see the comment there for why.
+wineserver -k >/dev/null 2>&1 || true
+pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
+pkill -f "uaRO.exe" >/dev/null 2>&1 || true
+pkill -f "setup.exe" >/dev/null 2>&1 || true
+sleep 1
+
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
 export WINE_CPU_TOPOLOGY=4:0,1,2,3
 
@@ -701,6 +722,14 @@ plutil -lint "/Applications/UaRO.app/Contents/Info.plist" "/Applications/UaRO Se
 zsh -n "/Applications/UaRO.app/Contents/MacOS/uaro-launch"
 zsh -n "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"
 
+# Ad-hoc re-sign both bundles -- a freshly-built, never-signed bundle usually still
+# launches fine locally (no quarantine attribute to trigger a strict Gatekeeper
+# check), but that's a latent gap, not a guarantee: any future edit to either
+# bundle's contents (this step, Step 2a's healing checks, or a later session)
+# should re-run this same codesign call afterward, not just the first build.
+codesign --force --deep --sign - "/Applications/UaRO.app"
+codesign --force --deep --sign - "/Applications/UaRO Settings.app"
+
 # Backup copies inside the game folder, per the original design intent
 cp -R "/Applications/UaRO.app" "$GAME_DIR/UaRO.app"
 cp -R "/Applications/UaRO Settings.app" "$GAME_DIR/UaRO Settings.app"
@@ -714,6 +743,14 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 
 ```bash
 "$LSREGISTER" -dump 2>/dev/null | grep -A2 "identifier:.*com.uaro"
+```
+
+**MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
+
+```bash
+for APP in "/Applications/UaRO.app" "/Applications/UaRO Settings.app"; do
+  codesign -dv "$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
+done
 ```
 
 ## Step 12 — First-run verification (do this before considering the install done)
@@ -739,6 +776,7 @@ Then walk the user through these four points, every time, regardless of how the 
 3. **A "Program Error" popup shouldn't appear anymore** — the launcher now silently retries once instead of showing it (see *Known open issues* below for the underlying, still-not-root-caused bug this papers over). If it somehow still appears twice in a row, that's the retry also failing; don't panic, just relaunch `UaRO.app` manually.
 4. **To uninstall uaRO entirely** — just invoke this skill again and ask for uninstall; the *Uninstall / rollback* section below has the exact commands, no need to figure it out manually.
 5. **In-game menu shortcuts use `Option`, not `Command`** (e.g. `Option+A` for the item window) — this matches how uaRO behaves in a Windows VM too. Copy/paste (`Cmd+C`/`Cmd+V`) work normally, no change there.
+6. **Switch to an English/ABC input source before playing** — if the Mac's active keyboard input method is Chinese, Japanese, Korean, Thai, or another non-ASCII input source, number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) won't register at all, and rebinding one will show "Unspecified value" instead. See *Known open issues* if English keeps silently reverting back specifically on the game window.
 
 ## Known open issues
 
@@ -757,6 +795,29 @@ Then walk the user through these four points, every time, regardless of how the 
 - Investigate whether the patcher exposes a config flag to skip its HTML panel entirely, avoiding the Gecko-dependent code path (would need patcher-specific knowledge not yet gathered).
 
 This is explicitly **not yet root-caused** — don't assume a future session solved it just because it isn't mentioned again here; check back with whoever's running it.
+
+**Mid-gameplay crash inside Gepard, jumping to unmapped memory (unresolved, distinct from the post-Gecko patcher crash above).** Unlike the crash above, this one hits `uaRO.exe` itself — the actual game client, mid-session during normal play, not the patcher right after Gecko. When it happens, the client writes its own crash report to the Downloads folder, named `The game has been crashed! uaRO` (plain text). Call stack, most-recent frame first:
+
+```
+0x68bf6efe ----------   <- crash site: not inside any loaded module
+0x0640705a gepard
+0x00718f63 uaro
+0x00a8d72d uaro
+0x00a6a8c6 uaro
+0x7b62c3b0 kernel32
+0x7bc5a627 ntdll
+0x7bc5acd8 ntdll
+```
+
+`EAX` and `EIP` were both `0x68bf6efe` — the same value — meaning the crash is almost certainly an indirect jump/call through a register (e.g. `CALL EAX`) landing on an address outside every loaded module's range (checked against the full loaded-module list at the end of the crash report; nothing owns that address).
+
+**Working hypothesis, not yet confirmed with a live debugger:** commercial anti-cheat like Gepard commonly avoids putting its real detection logic in the on-disk `.exe`/DLL — instead it allocates a block of memory at runtime, decrypts/writes code into it, marks it executable, and jumps there through a register, specifically so static analysis of the binary never sees the real logic. That allocate-mark-executable-then-jump sequence depends on Windows' `VirtualAlloc`/`VirtualProtect` semantics, which Wine reimplements rather than replicates byte-for-byte. If Wine's version of that sequence has any timing, permission, or address-space difference from real Windows, Gepard could end up jumping through a register that's stale, unmapped, or pointing at memory that was never actually committed as executable — this failure mode (indirect jump to unmapped memory, from inside the anti-cheat module itself) is exactly what this crash's stack and registers show.
+
+**Not yet root-caused.** To dig further: reproduce live with `WINEDEBUG=+seh,+relay` (same pattern as the post-Gecko crash above) and watch what `gepard` does immediately before the jump — specifically what writes into EAX and whether that value ever pointed at valid, committed memory. Don't assume a fix exists just because it isn't mentioned again here.
+
+**Number-row hotkeys (Skill Bar / Hotkey Bar) silently do nothing under a non-English input source.** If the Mac's active keyboard input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method, the number-row keys (`1`-`9`) get intercepted system-wide for candidate-word selection before Wine or the game ever sees them — letter keys and `Option`-modified shortcuts are unaffected, only bare number keys. Symptoms: in-game number-key hotkeys do nothing at all, and trying to rebind one (Shortcut Settings) shows the pressed key as "Unspecified value" instead of registering it. This has nothing to do with Step 9b's Option/Alt fix — confirmed by testing with that fix's registry keys removed entirely, with no change in this symptom.
+
+**Fix:** switch the Mac's input source to English/ABC before playing. **Known complication:** if macOS's *"Automatically switch to a document's input source"* setting (System Settings → Keyboard → Input Sources) is on, macOS remembers a separate input source *per window*, so it can silently switch the uaRO game window back to whatever it was last used with (Chinese, etc.) the moment that window regains focus — even if the input source was manually set to English right before switching to it. If English keeps reverting specifically when the game window comes to the front, either turn that setting off (system-wide effect, simplest fix), or manually re-select English a few times while the game window itself is focused so macOS re-learns English as that window's own remembered source.
 
 ## Step 9b — Fix in-game menu shortcuts (Cmd+A/Cmd+Z-style) not registering
 
@@ -821,6 +882,7 @@ wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAl
 | "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-launch` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
 | `Cmd+A`/`Cmd+Z` (or other Alt-style menu shortcuts) do nothing in-game, but `Cmd+C`/`Cmd+V`/other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts `Cmd+A`/`Cmd+Z`/`Cmd+C`/`Cmd+X`/`Cmd+V` before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Apply Step 9b: set `LeftOptionIsAlt`/`RightOptionIsAlt`, then use `Option+<letter>` in-game instead of `Cmd+<letter>` for menu shortcuts — leaves `Cmd+C`/`Cmd+V` untouched, no trade-off |
 | In-game paste needs `Ctrl+V` instead of `Cmd+V` (on a bottle set up with an earlier version of this skill) | An earlier version of Step 9b fixed the above by disabling the hidden Edit menu entirely — which fixed `Cmd+A`/`Cmd+Z` but broke `Cmd+V`'s automatic paste as a side effect | Undo it: `wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f`, then apply the current Step 9b (`LeftOptionIsAlt`/`RightOptionIsAlt`) instead — fixes both with no trade-off |
+| Number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) do nothing, or rebinding one shows "Unspecified value", while letters and `Option`-shortcuts work fine | Mac's active input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method — it intercepts number keys system-wide for candidate selection before the game ever sees them; unrelated to Step 9b | Switch to an English/ABC input source before playing. If it keeps reverting specifically on the game window, check System Settings → Keyboard → Input Sources → *"Automatically switch to a document's input source"* — see *Known open issues* |
 
 ## Uninstall / rollback
 
