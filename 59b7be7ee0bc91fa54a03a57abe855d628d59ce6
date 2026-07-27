@@ -1,0 +1,21 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: the previous fix (3d4430b, disabling Wine's hidden Edit menu)
+did stop Cmd+A/Cmd+Z from being swallowed, but broke native Cmd+V paste
+as a side effect.
+
+Ruled out: disabling the hidden Edit menu entirely — confirmed this
+actually works for Cmd+A/Cmd+Z, but was rejected once the Cmd+V
+regression was found, since it just traded one broken shortcut for
+another.
+
+Root cause: that same hidden Edit menu is what silently converts Cmd+V
+into the Ctrl+V the game actually expects — disabling the whole menu to
+fix Cmd+A/Cmd+Z necessarily broke that conversion too.
+
+Fix: switched approach entirely — map Option (never part of that hidden
+menu's shortcut list) to Alt via LeftOptionIsAlt/RightOptionIsAlt instead
+of touching the Edit menu at all. Matches how uaRO already behaves in a
+Windows VM (VMware Fusion etc.). No trade-off this time. Also added a
+migration path for bottles that already had the old EditMenu-disable fix
+applied.
