@@ -1,0 +1,15 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: Whisky.app/WhiskyWine runtime downloads depended entirely on
+upstream sources (Homebrew cask, dead data.getwhisky.app, an
+Internet-Archive snapshot) with no fallback if all of them failed; Step 6
+also mishandled a local (already-downloaded) installer path, and Step 10
+had no stated default for the resolution parameter.
+
+Root cause: no self-hosted fallback existed yet for the runtime binaries,
+and Step 6's branch logic assumed a URL rather than checking whether
+INSTALLER_SOURCE was already a local path.
+
+Fix: added this repo's own GitHub Release as a last-resort fallback for
+both Whisky.app and the WhiskyWine runtime, fixed Step 6's local-path
+branch, and cross-referenced the resolution default in Step 10.
