@@ -1,0 +1,11 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom (anticipated): an Apple-Silicon Mac still on an older macOS
+version would pass the arch gate (bdce01c) but could still silently run
+into a cask-install failure later, at Step 3.
+
+Root cause: Whisky's own cask metadata requires both `arch: arm64` and
+`macos >= 14` — only the architecture half had been gated so far.
+
+Fix: added a matching soft version-gate check to Pre-flight, same gentle
+tone as the arch-gate message.
