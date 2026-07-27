@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.6.0
+version: 0.7.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -865,6 +865,8 @@ A small convenience wrapper around three operations this file otherwise document
 
 `repair` specifically **diagnoses before it fixes**, rather than blindly re-running codesign/lsregister regardless of whether anything was actually wrong: it checks the game install and bottle exist, then per launcher checks the executable bit, script syntax, whether the script predates the `command -v whisky` fallback fix, `Info.plist` validity, and reads back the actual signature/registration state after attempting to fix them. Only the mechanical stuff (permissions, signature, registration) gets auto-fixed — anything else (bad syntax, a stale pre-fix script, a broken plist, a missing bottle) just gets flagged with a pointer back to Step 11, since rewriting script *content* automatically is a different (and riskier) kind of operation than the reversible, idempotent fixes this tool is meant for.
 
+**If anything couldn't be auto-fixed, `repair` doesn't just print `[WARN]` lines and stop there** — it collects them into a final numbered list, prints a ready-to-paste message pointing whoever's reading it at Step 11 (so the next step is "copy this to a Claude Code/Codex session," not "go figure out which section of SKILL.md applies"), and exits with status `1` (a clean run exits `0`) so the outcome is also detectable by anything scripting against `uaro-cli`, not only by a human reading the terminal output.
+
 **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk**, same as the launcher scripts above — this script has no shell variables to fall back on once installed.
 
 ```bash
@@ -907,6 +909,7 @@ cmd_launch() {
 
 cmd_repair() {
     local problems=0
+    local -a issues
 
     echo "-- Game install --"
     if [[ -f "$GAME_DIR/uaRO.exe" ]]; then
@@ -914,6 +917,7 @@ cmd_repair() {
     else
         echo "[WARN] uaRO.exe not found at $GAME_DIR -- game isn't actually installed there"
         problems=$((problems + 1))
+        issues+=("Game files missing at $GAME_DIR -- re-run Step 6/7 to (re)install the game, or check GAME_DIR is set correctly")
     fi
 
     if "$WHISKY" list 2>/dev/null | grep -q "$BOTTLE_NAME"; then
@@ -921,6 +925,7 @@ cmd_repair() {
     else
         echo "[WARN] Bottle '$BOTTLE_NAME' not found via 'whisky list' -- launchers will fail until it's recreated (Step 5)"
         problems=$((problems + 1))
+        issues+=("Bottle '$BOTTLE_NAME' missing -- recreate it via Step 5")
     fi
 
     local any=0
@@ -942,6 +947,7 @@ cmd_repair() {
         if [[ ! -f "$exe" ]]; then
             echo "[WARN] $exe missing entirely -- rebuild this launcher per SKILL.md Step 11"
             problems=$((problems + 1))
+            issues+=("$APP: executable missing entirely -- rebuild via Step 11")
             continue
         fi
 
@@ -957,6 +963,7 @@ cmd_repair() {
         else
             echo "[WARN] Script has a syntax error -- rebuild this launcher per SKILL.md Step 11"
             problems=$((problems + 1))
+            issues+=("$APP: script has a syntax error -- rebuild via Step 11")
         fi
 
         if grep -q 'command -v whisky' "$exe" 2>/dev/null; then
@@ -964,6 +971,7 @@ cmd_repair() {
         else
             echo "[WARN] Predates the command -v whisky fallback fix -- rebuild per SKILL.md Step 11"
             problems=$((problems + 1))
+            issues+=("$APP: predates the command -v whisky fallback fix -- rebuild via Step 11")
         fi
 
         if plutil -lint "$plist" >/dev/null 2>&1; then
@@ -971,12 +979,14 @@ cmd_repair() {
         else
             echo "[WARN] Info.plist invalid -- rebuild this launcher per SKILL.md Step 11"
             problems=$((problems + 1))
+            issues+=("$APP: Info.plist invalid -- rebuild via Step 11")
         fi
 
         codesign --force --deep --sign - "$bundle" >/dev/null 2>&1 || true
         if codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
             echo "[WARN] Still unsigned after a re-sign attempt"
             problems=$((problems + 1))
+            issues+=("$APP: still unsigned after a re-sign attempt -- not expected to fail, worth a closer look rather than a routine Step 11 rebuild")
         else
             echo "[OK]   Signature valid (re-signed)"
         fi
@@ -988,17 +998,30 @@ cmd_repair() {
         else
             echo "[WARN] Not showing up in Launch Services registration"
             problems=$((problems + 1))
+            issues+=("$APP: not registered with Launch Services after lsregister -f -- not expected to fail, worth a closer look")
         fi
     done
 
     echo "----------------------------------"
     if [[ $any -eq 0 ]]; then
         echo "No launcher apps found in /Applications -- nothing to check."
-    elif [[ $problems -eq 0 ]]; then
-        echo "All checks passed."
-    else
-        echo "$problems issue(s) found -- see [WARN] lines above; most point at rebuilding via SKILL.md Step 11, since repair only auto-fixes mechanical issues (permissions/signature/registration), not script content."
+        exit 0
     fi
+
+    if [[ $problems -eq 0 ]]; then
+        echo "All checks passed."
+        exit 0
+    fi
+
+    echo "$problems issue(s) found that repair could not fully auto-fix:"
+    for i in "${issues[@]}"; do
+        echo "  - $i"
+    done
+    echo ""
+    echo "Next step: open a Claude Code/Codex session in this repo (or paste the lines above into an existing one) and say:"
+    echo "  \"uaro-cli repair found the issues above on my uaRO install -- fix them following SKILL.md's Step 11.\""
+    echo "Exiting with status 1 so this is also detectable by anything scripting against uaro-cli, not just by reading this output."
+    exit 1
 }
 
 case "$1" in
@@ -1025,16 +1048,29 @@ zsh -n /opt/homebrew/bin/uaro-cli   # syntax check
 command -v uaro-cli                 # should resolve to /opt/homebrew/bin/uaro-cli
 uaro-cli                            # no args -> prints usage, doesn't error
 uaro-cli kill                       # safe even with nothing running -- confirm it prints the "Killed..." line, not an error
-uaro-cli repair                     # safe/idempotent -- confirm every line reads [OK], ending in "All checks passed."
+uaro-cli repair; echo "exit: $?"      # safe/idempotent -- confirm every line reads [OK], ending in "All checks passed." and exit 0
 ```
 
 **Prove `repair`'s diagnosis actually works, don't just trust a clean first run** — deliberately break something reversible, confirm `repair` both detects and fixes it, then confirm the underlying state is genuinely restored (not just repair's own say-so):
 
 ```bash
 chmod -x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"
-uaro-cli repair
-# Expect: "[FIXED] Executable bit was missing -- restored", ending in "All checks passed."
+uaro-cli repair; echo "exit: $?"
+# Expect: "[FIXED] Executable bit was missing -- restored", ending in "All checks passed." and exit 0
 test -x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher" && echo "confirmed executable again"
+```
+
+**Also prove the *unfixable*-issue path — the exit code and the actionable next-step message, not just the auto-fix path above:**
+
+```bash
+cp "/Applications/UaRO Game.app/Contents/MacOS/uaro-game" /tmp/uaro-game.orig-backup
+sed -i '' 's/command -v whisky/TEST_REMOVED/' "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
+uaro-cli repair; echo "exit: $?"
+# Expect: "[WARN] Predates the command -v whisky fallback fix...", a "1 issue(s) found" summary listing
+# it by name, the "Next step: open a Claude Code/Codex session..." block, and exit 1 -- not 0.
+cp /tmp/uaro-game.orig-backup "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"   # restore immediately
+chmod +x "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
+uaro-cli repair; echo "exit: $?"   # confirm back to "All checks passed." / exit 0 before moving on
 ```
 
 **Standing rule, same as the three launcher scripts:** if `BOTTLE_NAME`, `GAME_DIR`, or the set of process names killed on relaunch ever changes, update this script too — it's a fourth copy of that same logic, not exempt from the "keep all launcher-adjacent scripts in sync" rule in Step 11.

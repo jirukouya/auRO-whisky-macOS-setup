@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-27
+
+### Added
+- `uaro-cli repair` now collects every issue it can't auto-fix into a numbered list and prints a ready-to-paste "next step" message pointing at Step 11 (e.g. *"uaro-cli repair found the issues above on my uaRO install -- fix them following SKILL.md's Step 11."*), instead of leaving the user to reread scattered `[WARN]` lines and figure out the next move themselves.
+- `repair` now exits `1` when it found anything it couldn't fix, `0` otherwise — so the outcome is detectable by anything scripting against `uaro-cli`, not only by a human reading its output.
+- New verification block demonstrating the *unfixable*-issue path specifically (not just the auto-fix path added in 0.6.0): deliberately strip the `command -v whisky` fallback from a real launcher script, confirm `repair` reports it, lists it by name in the summary, prints the actionable next-step message, and exits `1` — then restore the file and confirm a clean re-run exits `0`.
+
 ## [0.6.0] - 2026-07-27
 
 ### Changed
