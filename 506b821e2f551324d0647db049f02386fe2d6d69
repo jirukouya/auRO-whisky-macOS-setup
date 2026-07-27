@@ -1,0 +1,15 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: README described the original VMware/Gepard Shield problem as
+generic "VM detection."
+
+Ruled out: the theory that Gepard Shield was detecting/blocking generic
+virtualization as such.
+
+Root cause: the actual incompatibility was Gepard Shield's compatibility
+with Windows 11 on ARM specifically — the guest OS a VM on Apple Silicon
+is forced to run — not VM-detection evasion in general.
+
+Fix: corrected the README's problem description accordingly (this commit
+began a short series of follow-up wording passes to align the rest of
+the README with the corrected root cause).
