@@ -1,0 +1,13 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom (reasoned from the existing iCloud-relocation gotcha's pattern):
+detecting the installer download by file size alone assumed that a file
+matching the ~4.7GB size window was necessarily finished.
+
+Root cause: a file could still be actively growing toward a larger final
+size while passing through that size window, or the browser could still
+be flushing the last bit to disk.
+
+Fix: added a check/wait/recheck step (stat size twice, 5s apart) before
+treating the candidate as done — the same pattern already used for the
+iCloud-relocation gotcha elsewhere in this skill.
