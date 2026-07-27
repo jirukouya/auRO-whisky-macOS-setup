@@ -1,0 +1,10 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: fallback instructions for fetching backup assets still described
+a private-repo / `gh auth` path.
+
+Root cause: those instructions were written when the repo was private;
+by this point the repo had been made public, making the private-repo
+auth fallback stale and unnecessary.
+
+Fix: simplified to plain `curl` (no auth needed for a public repo).
