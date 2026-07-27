@@ -1,0 +1,13 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: reading the skill from a novice (non-technical) user's
+perspective, rather than an experienced one, surfaced friction points
+that weren't obvious on a first pass.
+
+Root cause: no warning that Steps 1-2 can trigger a macOS admin/login
+sudo password prompt; no mention that Step 2b requires an existing uaRO
+account (registration wasn't covered); the background-download note
+appeared to conflict with the per-step approval gate; Step 7's installer
+GUI window may not auto-focus, easily misread as a silent failure.
+
+Fix: added explicit warnings/clarifications for each point.
