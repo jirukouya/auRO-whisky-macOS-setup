@@ -1,7 +1,7 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.4.0
-description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
+version: 0.5.0
+description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
 # uaRO on macOS via Whisky — Full Install Skill
@@ -31,6 +31,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 [Step 9b — Fix menu-shortcut keybinds](#step-9b--fix-in-game-menu-shortcuts-cmdacmdz-style-not-registering) ·
 [Step 10 — Game config files](#step-10--write-game-config-files) ·
 [Step 11 — Launcher .app bundles](#step-11--build-the-three-launcher-app-bundles) ·
+[Optional: uaro-cli command-line helper](#optional-uaro-cli-command-line-helper) ·
 [Step 12 — First-run verification](#step-12--first-run-verification-do-this-before-considering-the-install-done) ·
 [Installation complete](#installation-complete--post-this-once-step-12-passes)
 
@@ -141,6 +142,7 @@ Two independent things to check here:
 - **If `/Applications/UaRO.app` exists (old name, pre-2026-07-27)**, rename it to `UaRO Patcher.app` per Step 11's current naming, updating `Info.plist` (`CFBundleName`/`CFBundleDisplayName`/`CFBundleIdentifier`/`CFBundleExecutable`) and the script filename (`uaro-launch` → `uaro-patcher`) to match, then re-sign and re-register — don't leave an install half-migrated with the old bundle name but new internal content.
 - **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
 - **If `/Applications/UaRO Game.app` is missing (install predates 2026-07-27)**, offer to add it per Step 11's current version: *"There's now a third launcher option, `UaRO Game`, that skips the patcher for a faster relaunch — it comes with a real trade-off (see Step 11/Known open issues) I want you to be aware of before I add it. Want me to build it?"* Only build it if the user says yes — don't add it silently, since accepting its risk is the user's call, not a default.
+- **If `/opt/homebrew/bin/uaro-cli` is missing (install predates 2026-07-27)**, mention it's available and offer to add it per the *Optional: uaro-cli command-line helper* section below — this one carries no meaningful risk (it only wraps the kill/launch/repair operations this file already documents doing manually), so it's fine to build it as soon as the user says they'd find it useful, no special caution needed the way `UaRO Game.app` requires.
 - **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launchers too (see Step 11's standing rule on this) before moving on.
 
 Tell the user plainly what was found (or that nothing was) before proceeding, and adjust the plan instead of blindly redoing finished work:
@@ -857,6 +859,91 @@ for APP in "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/
 done
 ```
 
+## Optional: uaro-cli command-line helper
+
+A small convenience wrapper around three operations this file otherwise documents doing by hand: force-quitting stuck processes, launching the game, and re-signing/re-registering the launcher bundles after an edit. Purely optional — the game works fully without it — but cheap to build, since it just calls the same commands Step 11 and this section already use elsewhere in this file, with no new risk of its own (unlike `UaRO Game.app`, it has no accepted trade-off). Build it as part of Step 11, right after the three launcher bundles are signed and registered.
+
+**`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk**, same as the launcher scripts above — this script has no shell variables to fall back on once installed.
+
+```bash
+#!/bin/zsh
+set -e
+
+BOTTLE_NAME="<BOTTLE_NAME>"
+GAME_DIR="<GAME_DIR>"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+usage() {
+    cat <<'EOF'
+uaro-cli — command-line helper for the uaRO Whisky install
+
+Usage:
+  uaro-cli kill      Force-quit any running uaRO/Wine processes for this bottle
+  uaro-cli launch    Launch the game (same as double-clicking UaRO Patcher.app)
+  uaro-cli repair    Re-sign and re-register all installed launcher .app bundles
+EOF
+}
+
+cmd_kill() {
+    eval "$("$WHISKY" shellenv "$BOTTLE_NAME")" 2>/dev/null || true
+    wineserver -k >/dev/null 2>&1 || true
+    pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
+    pkill -f "uaRO.exe" >/dev/null 2>&1 || true
+    pkill -f "setup.exe" >/dev/null 2>&1 || true
+    echo "Killed any running uaRO/Wine processes for bottle '$BOTTLE_NAME'."
+}
+
+cmd_launch() {
+    open "/Applications/UaRO Patcher.app"
+}
+
+cmd_repair() {
+    local any=0
+    for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+        [[ -d "/Applications/$APP" ]] || continue
+        any=1
+        codesign --force --deep --sign - "/Applications/$APP"
+        "$LSREGISTER" -f "/Applications/$APP"
+    done
+    if [[ $any -eq 0 ]]; then
+        echo "No launcher apps found in /Applications — nothing to repair."
+    else
+        echo "Re-signed and re-registered all installed launcher apps."
+    fi
+}
+
+case "$1" in
+    kill)   cmd_kill ;;
+    launch) cmd_launch ;;
+    repair) cmd_repair ;;
+    *)      usage ;;
+esac
+```
+
+Install it directly into Homebrew's `bin` — already on `PATH` since Step 1, and already where `whisky` itself lives, so no separate `PATH` edit or shell-profile change is needed:
+
+```bash
+cat > /opt/homebrew/bin/uaro-cli <<'SCRIPT'
+<paste the script above, with <BOTTLE_NAME>/<GAME_DIR> substituted>
+SCRIPT
+chmod +x /opt/homebrew/bin/uaro-cli
+```
+
+**MANDATORY verification:**
+
+```bash
+zsh -n /opt/homebrew/bin/uaro-cli   # syntax check
+command -v uaro-cli                 # should resolve to /opt/homebrew/bin/uaro-cli
+uaro-cli                            # no args -> prints usage, doesn't error
+uaro-cli kill                       # safe even with nothing running -- confirm it prints the "Killed..." line, not an error
+uaro-cli repair                     # safe/idempotent -- confirm it re-signs+re-registers without error
+```
+
+**Standing rule, same as the three launcher scripts:** if `BOTTLE_NAME`, `GAME_DIR`, or the set of process names killed on relaunch ever changes, update this script too — it's a fourth copy of that same logic, not exempt from the "keep all launcher-adjacent scripts in sync" rule in Step 11.
+
+**Why this isn't a `~/.zshrc` alias/function instead** (a real suggestion from Discord contributor jax, considered and declined): a `~/.zshrc` edit is a global, unversioned mutation to a file this skill doesn't own and can't cleanly find-and-remove on uninstall, and it silently assumes the user's shell is `zsh` specifically. A standalone script dropped into an already-`PATH`'d directory gets the same one-word convenience (`uaro-cli kill`, not a full path) while staying a single file this skill can create, update, and delete cleanly — consistent with this project's existing preference for self-contained, reversible artifacts over editing shared user config.
+
 ## Step 12 — First-run verification (do this before considering the install done)
 
 1. Open `UaRO Settings.app`. Confirm it runs the FCOM re-patch without error, then opens "RO OpenSetup" with no crash. In its Resolution dropdown, pick the closest same-aspect-ratio entry to what the user actually wants (there is no guarantee the exact requested pixel value is offered). Click **Apply**, then **OK**.
@@ -865,6 +952,7 @@ done
 4. Tell the user: **never use the patcher's own in-app Settings button** — always use `UaRO Settings.app` for graphics/resolution changes, since the patcher will silently re-download an unpatched `setup.exe` over time.
 5. Tell the user: **the game's `Alt` key is the Mac's `Option` (⌥) key** — the keyboard has no key actually labeled "Alt," and it's `Option`, not `Command`, that Step 9b maps to it. Any in-game shortcut described as `Alt+<letter>` (e.g. opening the item window) means physically pressing `Option+<letter>`.
 6. Tell the user about `UaRO Game.app`: it's a faster relaunch option that skips the patcher's update check entirely — see the risk note in Step 11 and *Known open issues* before treating it as a full replacement for `UaRO Patcher.app`.
+7. If built, tell the user about `uaro-cli`: `uaro-cli kill`/`uaro-cli launch`/`uaro-cli repair` from any Terminal window, no need to open Activity Monitor or redo the codesign/lsregister steps by hand.
 
 ## Installation complete — post this once Step 12 passes
 
@@ -883,6 +971,7 @@ Then walk the user through these four points, every time, regardless of how the 
 5. **In-game menu shortcuts use `Option`, not `Command`** (e.g. `Option+A` for the item window) — this matches how uaRO behaves in a Windows VM too. Copy/paste (`Cmd+C`/`Cmd+V`) work normally, no change there.
 6. **Switch to an English/ABC input source before playing** — if the Mac's active keyboard input method is Chinese, Japanese, Korean, Thai, or another non-ASCII input source, number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) won't register at all, and rebinding one will show "Unspecified value" instead. See *Known open issues* if English keeps silently reverting back specifically on the game window.
 7. **`UaRO Game.app` skips the patcher — use it as a quick relaunch shortcut, not a permanent replacement.** It launches the game directly with no update check at all. Run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped, so this bottle actually gets it. See *Known open issues* for the unresolved risk this carries.
+8. **If `uaro-cli` was built**, mention it's available from any Terminal window: `uaro-cli kill` to force-quit a stuck game/patcher, `uaro-cli launch` to start playing, `uaro-cli repair` to re-sign/re-register the launcher apps after a macOS update or manual edit — all three are shortcuts for things this skill otherwise does by hand.
 
 ## Known open issues
 
@@ -990,9 +1079,16 @@ Everything else is safely re-derivable by re-running this skill. **Ask the user 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 rm -rf "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" "$GAME_DIR"
+rm -f /opt/homebrew/bin/uaro-cli   # no-op if it was never built
+rm -rf ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # the downloaded/extracted installer itself (Step 2b/6) --
+                                                    # lives OUTSIDE $GAME_DIR as a sibling, not a subfolder,
+                                                    # so it survives the rm -rf above and was silently leaking
+                                                    # ~4.7GB+ per uninstall before this line existed
 # Verify: neither app should resolve, and the game dir should be gone
 "$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
 test -d "$GAME_DIR" && echo "still there" || echo "removed"
+command -v uaro-cli && echo "still there" || echo "removed"
+test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer leftovers still there" || echo "installer leftovers removed"
 
 # --- Level 2: also drop the bottle ---
 "$(command -v whisky)" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI

@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-27
+
+### Added
+- New optional `uaro-cli` command-line helper, built as part of Step 11: `uaro-cli kill` (force-quit stuck uaRO/Wine processes), `uaro-cli launch` (open `UaRO Patcher.app`), `uaro-cli repair` (re-sign + re-register all installed launcher `.app` bundles). Installed directly to `/opt/homebrew/bin/uaro-cli` — already on `PATH` since Step 1, no shell-profile edit needed.
+- Step 2a now offers to add `uaro-cli` to existing installs that predate this version — no consent-gating needed the way `UaRO Game.app` requires, since this carries no accepted risk of its own.
+- Prompted by a suggestion from Discord contributor jax (add `~/.zshrc` aliases for the same three operations, optionally split across multiple skills). Kept the convenience, declined the `~/.zshrc`/multi-skill-file parts of the suggestion — see the new section's own explanation for why (global unversioned config mutation, shell-specific, conflicts with this repo's single-self-contained-file design). Verified all three subcommands on a real machine (kill/repair both confirmed working; launch uses the same `open` call already relied on elsewhere in this skill).
+
+### Fixed
+- Uninstall Level 1 was silently leaking the downloaded/extracted uaRO installer (`~/Games/UaRO_Setup.zip` + `~/Games/UaRO_Setup/`, ~4.7GB+ combined) on every uninstall — found while auditing whether this version's launcher renames/`uaro-cli` addition were fully reflected in the Uninstall section (they were), but that audit surfaced this separate, pre-existing gap: those two paths sit as siblings of `$GAME_DIR`, not inside it, so `rm -rf "$GAME_DIR"` never touched them. Now explicitly removed and verified in Level 1.
+
 ## [0.4.0] - 2026-07-27
 
 ### Added
