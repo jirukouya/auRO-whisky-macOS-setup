@@ -1,0 +1,11 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: icon extraction from the .ico resource was relying on icotool's
+automatic output-filename pattern (e.g. patcher_main_1_48x48x24.png).
+
+Root cause: that auto-naming convention isn't a documented/guaranteed
+contract — it's an implementation detail of icotool that isn't safe to
+depend on across versions or builds.
+
+Fix: use `icotool --index` with an explicit, controlled output filename
+instead of guessing the auto-generated name.
