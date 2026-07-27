@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.2.0
+version: 0.2.1
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, and building two launcher .app bundles. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -9,6 +9,38 @@ description: Installs and configures uaRO (a Ragnarok Online private server) on 
 This file is meant to be handed to a fresh Claude Code (or Codex) session on a brand-new Mac, with no other context. Read it once, then execute Steps 1–12 in order. Every value needed to actually do the work is inlined below — nothing here requires fetching an external reference doc first.
 
 This is not a rewrite from theory. It is the corrected, verified procedure after actually running the whole thing once on a real machine (Apple Silicon, macOS 26.5.2) and finding several real bugs in the "obvious" version of these steps. Every mandatory verification step below exists because skipping it once actually produced a silent failure during that run — they are not defensive-programming boilerplate.
+
+## Table of contents
+
+**Setup (execute in order, once):**
+[0. Operating principles](#0-operating-principles--read-before-starting) ·
+[1a. Progress table](#1a-progress-table-post-this-updated-after-every-single-step) ·
+[1. Parameters](#1-parameters-decide-these-fresh-every-machine) ·
+[2. Pre-flight](#2-pre-flight) ·
+[2a. Detect existing state](#2a-detect-existing-state-before-step-3--different-machines-start-from-different-points) ·
+[2b. Kick off installer download](#2b-kick-off-the-uaro-installer-download-now--dont-wait-until-step-6) ·
+[Step 1 — Homebrew](#step-1--homebrew) ·
+[Step 2 — Rosetta 2](#step-2--rosetta-2-apple-silicon-only) ·
+[Step 3 — Whisky.app](#step-3--whiskyapp) ·
+[Step 4 — WhiskyWine runtime](#step-4--whiskywine-runtime-wine-7x--apple-gptk--dxvk) ·
+[Step 5 — Bottle create/config](#step-5--create--configure-the-bottle) ·
+[Step 6 — Download & extract installer](#step-6--download--extract-the-uaro-installer) ·
+[Step 7 — Run the installer](#step-7--run-the-installer) ·
+[Step 8 — FCOM byte-patches](#step-8--patch-setupexe-fcom-byte-patches-two-sites) ·
+[Step 9 — Wine Gecko pre-install](#step-9--pre-install-wine-gecko-mandatory-before-uaroapp-is-ever-launched) ·
+[Step 9b — Fix menu-shortcut keybinds](#step-9b--fix-in-game-menu-shortcuts-cmdacmdz-style-not-registering) ·
+[Step 10 — Game config files](#step-10--write-game-config-files) ·
+[Step 11 — Launcher .app bundles](#step-11--build-the-two-launcher-app-bundles) ·
+[Step 12 — First-run verification](#step-12--first-run-verification-do-this-before-considering-the-install-done) ·
+[Installation complete](#installation-complete--post-this-once-step-12-passes)
+
+**Reference (consult as needed, not part of the linear install path):**
+[Known open issues](#known-open-issues) (tags: `Crash/Patcher`, `Crash/Gameplay`, `Input/Keyboard`) ·
+[Common Gotchas table](#common-gotchas-reference-table) (tags: `Install/Homebrew`, `Install/Download`, `Install/Installer`, `Bottle/Config`, `Runtime/Wine`, `Installer/FCOM`, `Config/Graphics`, `Launcher/Signing`, `Input/Keyboard`, `Crash/Gameplay`, `Tooling/Environment`) ·
+[Uninstall / rollback](#uninstall--rollback) ·
+[Credits & Disclaimer](#credits--disclaimer)
+
+See also this repo's root `CLAUDE.md` for where *project history* (as opposed to install-procedure content) lives — commit messages, `CHANGELOG.md`, this file's Known open issues, and Claude's own cross-session memory.
 
 ## 0. Operating principles — read before starting
 
@@ -469,6 +501,39 @@ When the "Wine Gecko Installer" dialog appears, **click Install** and wait for i
 
 If the patcher then crashes right after Gecko finishes with a `Program Error` dialog, that's a separate, already-known open issue (see below) — Gecko itself installed correctly at that point; don't re-attempt this step because of that crash.
 
+## Step 9b — Fix in-game menu shortcuts (Cmd+A/Cmd+Z-style) not registering
+
+**Category: Input/Keyboard**
+
+**Root cause, confirmed by reading Wine's actual source, not a guess:** the game's menu-style shortcuts (item window, etc.) are built for a Windows `Alt+<letter>` scheme. Wine's mac driver already translates a bare physical `Cmd` key into `Alt` by default (`winemac.drv/keyboard.c`, `kVK_Command → VK_LMENU` — no setting needed for that part) — but Whisky's forked Wine (`winemac.drv/cocoa_app.m`) *also* injects a hidden "Edit" menu (Cut/Copy/Paste/Select All/Undo) into every Wine window, bound to `Cmd+X/C/V/A/Z`. macOS matches that menu's key equivalents *before* a keypress ever reaches the game — so specifically `Cmd+A` (Select All) and `Cmd+Z` (Undo) get swallowed by that hidden menu and never reach the game as `Alt+A`/`Alt+Z`, while unrelated combos like `Cmd+Q`/`Cmd+E` (not in that menu) pass straight through untouched. Same bug, same symptom, already reported upstream: [Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060).
+
+**Don't fix this by disabling the hidden Edit menu (`EditMenu` registry key) — that was tried and tested for real, and it works, but it breaks something else.** Disabling that menu does stop it from swallowing `Cmd+A`/`Cmd+Z`, but that same hidden menu is *also* what makes `Cmd+C`/`Cmd+V` paste correctly in the first place (by silently converting them into the `Ctrl+C`/`Ctrl+V` the game actually expects) — so disabling it trades one broken shortcut for another. **The actual fix is to stop using `Cmd` for these shortcuts at all, and use `Option` instead** — `Option` was never part of that hidden menu's shortcut list, so it was never at risk of being swallowed to begin with, and this matches how uaRO already behaves for anyone who's played it in a Windows VM (VMware Fusion, etc.), where `Option`/`Alt` has always been the key that triggers these shortcuts.
+
+**If this bottle previously had the old `EditMenu`-disable fix applied, undo it first** (check with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu` — any result at all, even empty, means it's set):
+
+```bash
+eval "$(whisky shellenv "$BOTTLE_NAME")"
+wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f 2>/dev/null || true
+```
+
+**Do this after Step 9, before the patcher/game is ever launched for real play** — and any time this symptom is reported on an existing install. These settings are only read when a Wine window is created, so a fully closed game/bottle is required first:
+
+```bash
+pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running — close it first, this fix needs a clean bottle" || echo "Clean, safe to proceed"
+```
+
+```bash
+eval "$(whisky shellenv "$BOTTLE_NAME")"
+wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt /t REG_SZ /d y /f
+wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAlt /t REG_SZ /d y /f
+wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt
+wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAlt
+```
+
+**Tell the user plainly, every time this is applied:** in-game menu shortcuts now use **`Option+<letter>`, not `Cmd+<letter>`** (matches the VMware/Windows-VM experience). `Cmd+C`/`Cmd+V`/`Cmd+X` keep working exactly as before for copy/paste — nothing changes there, and there's no trade-off this time.
+
+**A community fork's alternate approach is not a substitute for this fix either.** [frankea/Whisky](https://github.com/frankea/Whisky) added a "Map Command Key to Windows Ctrl" toggle claiming to close #1060, but it only sets `LeftCommandIsCtrl`/`RightCommandIsCtrl` — a setting that controls how an *already-delivered* Cmd keypress gets translated. It does nothing about the hidden Edit menu swallowing `Cmd+A`/`Cmd+Z` before that translation ever happens (confirmed by reading that fork's actual commit diff — it never touches `EditMenu`), so it doesn't fix this symptom, and setting `LeftCommandIsAlt`/`RightCommandIsAlt` (sometimes suggested alongside it) does nothing at all — those registry names don't exist anywhere in Wine's source; Wine never reads them.
+
 ## Step 10 — Write game config files
 
 ### `dinput.ini` (ROExt plugin) — at `$GAME_DIR/dinput.ini`
@@ -780,7 +845,7 @@ Then walk the user through these four points, every time, regardless of how the 
 
 ## Known open issues
 
-**Post-Gecko patcher crash (unresolved).** After Gecko finishes installing (Step 9) and the patcher begins downloading patch files, `UaRo Patcher.exe` crashed once with Wine's "Program Error" dialog:
+**Post-Gecko patcher crash (unresolved).** **Category: Crash/Patcher** After Gecko finishes installing (Step 9) and the patcher begins downloading patch files, `UaRo Patcher.exe` crashed once with Wine's "Program Error" dialog:
 ```
 0x0000014000a059 uaro patcher+0xa059: int  $3
 ```
@@ -796,7 +861,7 @@ Then walk the user through these four points, every time, regardless of how the 
 
 This is explicitly **not yet root-caused** — don't assume a future session solved it just because it isn't mentioned again here; check back with whoever's running it.
 
-**Mid-gameplay crash inside Gepard, jumping to unmapped memory (unresolved, distinct from the post-Gecko patcher crash above).** Unlike the crash above, this one hits `uaRO.exe` itself — the actual game client, mid-session during normal play, not the patcher right after Gecko. When it happens, the client writes its own crash report to the Downloads folder, named `The game has been crashed! uaRO` (plain text). Call stack, most-recent frame first:
+**Mid-gameplay crash inside Gepard, jumping to unmapped memory (unresolved, distinct from the post-Gecko patcher crash above).** **Category: Crash/Gameplay** Unlike the crash above, this one hits `uaRO.exe` itself — the actual game client, mid-session during normal play, not the patcher right after Gecko. When it happens, the client writes its own crash report to the Downloads folder, named `The game has been crashed! uaRO` (plain text). Call stack, most-recent frame first:
 
 ```
 0x68bf6efe ----------   <- crash site: not inside any loaded module
@@ -815,74 +880,45 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 
 **Not yet root-caused.** To dig further: reproduce live with `WINEDEBUG=+seh,+relay` (same pattern as the post-Gecko crash above) and watch what `gepard` does immediately before the jump — specifically what writes into EAX and whether that value ever pointed at valid, committed memory. Don't assume a fix exists just because it isn't mentioned again here.
 
-**Number-row hotkeys (Skill Bar / Hotkey Bar) silently do nothing under a non-English input source.** If the Mac's active keyboard input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method, the number-row keys (`1`-`9`) get intercepted system-wide for candidate-word selection before Wine or the game ever sees them — letter keys and `Option`-modified shortcuts are unaffected, only bare number keys. Symptoms: in-game number-key hotkeys do nothing at all, and trying to rebind one (Shortcut Settings) shows the pressed key as "Unspecified value" instead of registering it. This has nothing to do with Step 9b's Option/Alt fix — confirmed by testing with that fix's registry keys removed entirely, with no change in this symptom.
+**Number-row hotkeys (Skill Bar / Hotkey Bar) silently do nothing under a non-English input source.** **Category: Input/Keyboard** If the Mac's active keyboard input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method, the number-row keys (`1`-`9`) get intercepted system-wide for candidate-word selection before Wine or the game ever sees them — letter keys and `Option`-modified shortcuts are unaffected, only bare number keys. Symptoms: in-game number-key hotkeys do nothing at all, and trying to rebind one (Shortcut Settings) shows the pressed key as "Unspecified value" instead of registering it. This has nothing to do with Step 9b's Option/Alt fix — confirmed by testing with that fix's registry keys removed entirely, with no change in this symptom.
 
 **Fix:** switch the Mac's input source to English/ABC before playing. **Known complication:** if macOS's *"Automatically switch to a document's input source"* setting (System Settings → Keyboard → Input Sources) is on, macOS remembers a separate input source *per window*, so it can silently switch the uaRO game window back to whatever it was last used with (Chinese, etc.) the moment that window regains focus — even if the input source was manually set to English right before switching to it. If English keeps reverting specifically when the game window comes to the front, either turn that setting off (system-wide effect, simplest fix), or manually re-select English a few times while the game window itself is focused so macOS re-learns English as that window's own remembered source.
 
-## Step 9b — Fix in-game menu shortcuts (Cmd+A/Cmd+Z-style) not registering
-
-**Root cause, confirmed by reading Wine's actual source, not a guess:** the game's menu-style shortcuts (item window, etc.) are built for a Windows `Alt+<letter>` scheme. Wine's mac driver already translates a bare physical `Cmd` key into `Alt` by default (`winemac.drv/keyboard.c`, `kVK_Command → VK_LMENU` — no setting needed for that part) — but Whisky's forked Wine (`winemac.drv/cocoa_app.m`) *also* injects a hidden "Edit" menu (Cut/Copy/Paste/Select All/Undo) into every Wine window, bound to `Cmd+X/C/V/A/Z`. macOS matches that menu's key equivalents *before* a keypress ever reaches the game — so specifically `Cmd+A` (Select All) and `Cmd+Z` (Undo) get swallowed by that hidden menu and never reach the game as `Alt+A`/`Alt+Z`, while unrelated combos like `Cmd+Q`/`Cmd+E` (not in that menu) pass straight through untouched. Same bug, same symptom, already reported upstream: [Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060).
-
-**Don't fix this by disabling the hidden Edit menu (`EditMenu` registry key) — that was tried and tested for real, and it works, but it breaks something else.** Disabling that menu does stop it from swallowing `Cmd+A`/`Cmd+Z`, but that same hidden menu is *also* what makes `Cmd+C`/`Cmd+V` paste correctly in the first place (by silently converting them into the `Ctrl+C`/`Ctrl+V` the game actually expects) — so disabling it trades one broken shortcut for another. **The actual fix is to stop using `Cmd` for these shortcuts at all, and use `Option` instead** — `Option` was never part of that hidden menu's shortcut list, so it was never at risk of being swallowed to begin with, and this matches how uaRO already behaves for anyone who's played it in a Windows VM (VMware Fusion, etc.), where `Option`/`Alt` has always been the key that triggers these shortcuts.
-
-**If this bottle previously had the old `EditMenu`-disable fix applied, undo it first** (check with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu` — any result at all, even empty, means it's set):
-
-```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
-wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f 2>/dev/null || true
-```
-
-**Do this after Step 9, before the patcher/game is ever launched for real play** — and any time this symptom is reported on an existing install. These settings are only read when a Wine window is created, so a fully closed game/bottle is required first:
-
-```bash
-pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running — close it first, this fix needs a clean bottle" || echo "Clean, safe to proceed"
-```
-
-```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
-wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt /t REG_SZ /d y /f
-wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAlt /t REG_SZ /d y /f
-wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt
-wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAlt
-```
-
-**Tell the user plainly, every time this is applied:** in-game menu shortcuts now use **`Option+<letter>`, not `Cmd+<letter>`** (matches the VMware/Windows-VM experience). `Cmd+C`/`Cmd+V`/`Cmd+X` keep working exactly as before for copy/paste — nothing changes there, and there's no trade-off this time.
-
-**A community fork's alternate approach is not a substitute for this fix either.** [frankea/Whisky](https://github.com/frankea/Whisky) added a "Map Command Key to Windows Ctrl" toggle claiming to close #1060, but it only sets `LeftCommandIsCtrl`/`RightCommandIsCtrl` — a setting that controls how an *already-delivered* Cmd keypress gets translated. It does nothing about the hidden Edit menu swallowing `Cmd+A`/`Cmd+Z` before that translation ever happens (confirmed by reading that fork's actual commit diff — it never touches `EditMenu`), so it doesn't fix this symptom, and setting `LeftCommandIsAlt`/`RightCommandIsAlt` (sometimes suggested alongside it) does nothing at all — those registry names don't exist anywhere in Wine's source; Wine never reads them.
-
 ## Common Gotchas (reference table)
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `brew install --cask whisky` exits 0 but installs nothing | Cask can be silently disabled upstream | Verify with `find_whisky_app`-equivalent check; fall back to GitHub release zip only if truly absent |
-| `command not found: wine64` | WhiskyWine runtime never downloaded (dead CDN) | Manually install from Internet Archive snapshot (Step 4); never rely on Whisky's own downloader |
-| Whisky's "Install GPTK" shows instant success but nothing works | Download URL 404s, Whisky doesn't surface the error | Ignore that button; install WhiskyWine manually |
-| Empty folder after `unzip` | macOS's bundled unzip can't handle ZIP64 archives >4GB | Always use `ditto -xk` |
-| `xattr -dr com.apple.quarantine` floods "Permission denied" | tar-extracted files are read-only; `xattr -d` needs write perms just to *attempt* a delete, regardless of whether the attribute exists | `chmod -R u+w ... \|\| true` before the `xattr` call, and `\|\| true` on it too |
-| `WhiskyWineVersion.plist` written as a plain string silently fails `isWhiskyWineInstalled()` | Whisky's Codable decode expects a structured `{major,minor,patch,preRelease,build}` dict, not a string | Use the exact structured plist in Step 4 |
-| `whisky list` prints a bottle path that doesn't exist | Cosmetic CLI display bug | Always use `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>` |
-| A just-extracted/downloaded file mysteriously vanishes and Wine reports `c0000135` | iCloud Drive silently relocated the folder out from under the running process — affects `~/Downloads` too, not just `~/Documents`/`~/Desktop` | Use a non-iCloud `GAME_DIR`/scratch dir (`~/Games/...`); always wait ~30s and recheck after any extraction there |
-| Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Use `eval $(whisky shellenv <bottle>); wine64 setup.exe /DIR=Z:\...` directly |
-| Game crashes ~3s after login | Gepard CPU detection | `WINE_CPU_TOPOLOGY=4:0,1,2,3` in the launcher |
-| `Gepard::T Code: 3::110::12` | Native MSVC DLLs not loading | `WINEDLLOVERRIDES` must include `msvcp140,vcruntime140,concrt140,vccorlib140=n,b`, DLLs must sit next to the game exe |
-| Low FPS / stutter | Launcher replaced `WINEDLLOVERRIDES` instead of appending | Use the `${VAR:+$VAR;}` append idiom, never overwrite |
-| Cursor disappears over the game window | `MouseExclusive=1` | Set to `0` in `OptionInfo.lua` |
-| Black screen on launch | `ISFULLSCREENMODE=1` | Set to `0` in `OptionInfo.lua` |
-| `dd` write to a binary file silently denied | Some sandboxed/agent execution environments block direct `dd` writes independent of file permissions | Fall back to Python `open(path,'r+b')`, seek/write — byte-identical result |
-| `DX9DEVICENAME` ends up with half the expected backslashes | Generated via an **unquoted** heredoc — the shell itself collapsed `\\` pairs before the inner script saw them | Use a quoted heredoc (`<<'EOF'`) or write a real script file, never an unquoted heredoc, for backslash-heavy content |
-| Hand-edited resolution in `OptionInfo.lua` doesn't match what RO OpenSetup shows | `OptionInfo.lua` isn't the sole source of truth — RO OpenSetup has its own dropdown/writer | Pick the value from RO OpenSetup's own dropdown and click Apply; let it round-trip back into the file |
-| A freshly built `.app` bundle doesn't show up via `mdls`/`mdfind` | Spotlight indexing lags well behind actual Launch Services registration | Verify with `lsregister -dump \| grep <bundle-id>` instead |
-| Launcher `.app`s show the generic blank-document icon | No `CFBundleIconFile` + no icon actually placed in `Contents/Resources/` | Extract the game's own 48x48 icon from `UaRo Patcher.exe` (`wrestool`/`icotool`), build an `.icns` with `iconutil`, add `CFBundleIconFile`, then `lsregister -f` + `killall Dock; killall Finder` |
-| `setup.exe` crashes 'illegal instruction at 0042C0CD' / '00421E39' | Untranslatable FCOM encodings at Site A / Site B | Run the FCOM patch (Step 8 / `UaRO Settings.app`) |
-| `setup.exe` crashes at a *different* `0042xxxx` address | Uncatalogued third FCOM site (installer build changed) | Subtract `0x400000`, dump 16 bytes, treat as a new finding — don't assume the two known offsets are permanent |
-| `setup.exe` "stops working" after a patcher update | `UaRo Patcher.exe` re-downloaded and overwrote the patched file with the original | Always use `UaRO Settings.app` (re-patches every launch); never the patcher's own in-app Settings button |
-| Launcher errors "a bottle with that name does not exist" | Hardcoded bottle name doesn't match the real one | Resolve the actual bottle name/UUID dynamically, don't hardcode across machines |
-| Patcher stuck forever at "Getting patch_main.txt...", blank white panel | Wine Gecko not installed — this is a hard dependency, not cosmetic | Pre-install via `winetricks -q gecko` (Step 9) before ever launching the patcher |
-| Wine Gecko Installer prompt never reappears, patcher permanently stuck | Clicking **Cancel** instead of Install appears to make Wine remember the decision and never re-prompt | Always click **Install**; better yet, pre-install non-interactively so the prompt never appears live |
-| "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-launch` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
-| `Cmd+A`/`Cmd+Z` (or other Alt-style menu shortcuts) do nothing in-game, but `Cmd+C`/`Cmd+V`/other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts `Cmd+A`/`Cmd+Z`/`Cmd+C`/`Cmd+X`/`Cmd+V` before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Apply Step 9b: set `LeftOptionIsAlt`/`RightOptionIsAlt`, then use `Option+<letter>` in-game instead of `Cmd+<letter>` for menu shortcuts — leaves `Cmd+C`/`Cmd+V` untouched, no trade-off |
-| In-game paste needs `Ctrl+V` instead of `Cmd+V` (on a bottle set up with an earlier version of this skill) | An earlier version of Step 9b fixed the above by disabling the hidden Edit menu entirely — which fixed `Cmd+A`/`Cmd+Z` but broke `Cmd+V`'s automatic paste as a side effect | Undo it: `wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f`, then apply the current Step 9b (`LeftOptionIsAlt`/`RightOptionIsAlt`) instead — fixes both with no trade-off |
-| Number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) do nothing, or rebinding one shows "Unspecified value", while letters and `Option`-shortcuts work fine | Mac's active input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method — it intercepts number keys system-wide for candidate selection before the game ever sees them; unrelated to Step 9b | Switch to an English/ABC input source before playing. If it keeps reverting specifically on the game window, check System Settings → Keyboard → Input Sources → *"Automatically switch to a document's input source"* — see *Known open issues* |
+Sorted, and taggable, by **Category** — use it to jump straight to the relevant rows instead of scanning the whole table: `Install/Homebrew`, `Install/Download`, `Install/Installer`, `Bottle/Config`, `Runtime/Wine`, `Installer/FCOM`, `Config/Graphics`, `Launcher/Signing`, `Input/Keyboard`, `Crash/Gameplay`, `Tooling/Environment`.
+
+| Category | Symptom | Cause | Fix |
+|---|---|---|---|
+| Install/Homebrew | `brew install --cask whisky` exits 0 but installs nothing | Cask can be silently disabled upstream | Verify with `find_whisky_app`-equivalent check; fall back to GitHub release zip only if truly absent |
+| Runtime/Wine | `command not found: wine64` | WhiskyWine runtime never downloaded (dead CDN) | Manually install from Internet Archive snapshot (Step 4); never rely on Whisky's own downloader |
+| Runtime/Wine | Whisky's "Install GPTK" shows instant success but nothing works | Download URL 404s, Whisky doesn't surface the error | Ignore that button; install WhiskyWine manually |
+| Install/Download | Empty folder after `unzip` | macOS's bundled unzip can't handle ZIP64 archives >4GB | Always use `ditto -xk` |
+| Runtime/Wine | `xattr -dr com.apple.quarantine` floods "Permission denied" | tar-extracted files are read-only; `xattr -d` needs write perms just to *attempt* a delete, regardless of whether the attribute exists | `chmod -R u+w ... \|\| true` before the `xattr` call, and `\|\| true` on it too |
+| Runtime/Wine | `WhiskyWineVersion.plist` written as a plain string silently fails `isWhiskyWineInstalled()` | Whisky's Codable decode expects a structured `{major,minor,patch,preRelease,build}` dict, not a string | Use the exact structured plist in Step 4 |
+| Bottle/Config | `whisky list` prints a bottle path that doesn't exist | Cosmetic CLI display bug | Always use `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>` |
+| Install/Download | A just-extracted/downloaded file mysteriously vanishes and Wine reports `c0000135` | iCloud Drive silently relocated the folder out from under the running process — affects `~/Downloads` too, not just `~/Documents`/`~/Desktop` | Use a non-iCloud `GAME_DIR`/scratch dir (`~/Games/...`); always wait ~30s and recheck after any extraction there |
+| Install/Installer | Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Use `eval $(whisky shellenv <bottle>); wine64 setup.exe /DIR=Z:\...` directly |
+| Crash/Gameplay | Game crashes ~3s after login | Gepard CPU detection | `WINE_CPU_TOPOLOGY=4:0,1,2,3` in the launcher |
+| Crash/Gameplay | `Gepard::T Code: 3::110::12` | Native MSVC DLLs not loading | `WINEDLLOVERRIDES` must include `msvcp140,vcruntime140,concrt140,vccorlib140=n,b`, DLLs must sit next to the game exe |
+| Runtime/Wine | Low FPS / stutter | Launcher replaced `WINEDLLOVERRIDES` instead of appending | Use the `${VAR:+$VAR;}` append idiom, never overwrite |
+| Config/Graphics | Cursor disappears over the game window | `MouseExclusive=1` | Set to `0` in `OptionInfo.lua` |
+| Config/Graphics | Black screen on launch | `ISFULLSCREENMODE=1` | Set to `0` in `OptionInfo.lua` |
+| Tooling/Environment | `dd` write to a binary file silently denied | Some sandboxed/agent execution environments block direct `dd` writes independent of file permissions | Fall back to Python `open(path,'r+b')`, seek/write — byte-identical result |
+| Config/Graphics | `DX9DEVICENAME` ends up with half the expected backslashes | Generated via an **unquoted** heredoc — the shell itself collapsed `\\` pairs before the inner script saw them | Use a quoted heredoc (`<<'EOF'`) or write a real script file, never an unquoted heredoc, for backslash-heavy content |
+| Config/Graphics | Hand-edited resolution in `OptionInfo.lua` doesn't match what RO OpenSetup shows | `OptionInfo.lua` isn't the sole source of truth — RO OpenSetup has its own dropdown/writer | Pick the value from RO OpenSetup's own dropdown and click Apply; let it round-trip back into the file |
+| Launcher/Signing | A freshly built `.app` bundle doesn't show up via `mdls`/`mdfind` | Spotlight indexing lags well behind actual Launch Services registration | Verify with `lsregister -dump \| grep <bundle-id>` instead |
+| Launcher/Signing | Launcher `.app`s show the generic blank-document icon | No `CFBundleIconFile` + no icon actually placed in `Contents/Resources/` | Extract the game's own 48x48 icon from `UaRo Patcher.exe` (`wrestool`/`icotool`), build an `.icns` with `iconutil`, add `CFBundleIconFile`, then `lsregister -f` + `killall Dock; killall Finder` |
+| Installer/FCOM | `setup.exe` crashes 'illegal instruction at 0042C0CD' / '00421E39' | Untranslatable FCOM encodings at Site A / Site B | Run the FCOM patch (Step 8 / `UaRO Settings.app`) |
+| Installer/FCOM | `setup.exe` crashes at a *different* `0042xxxx` address | Uncatalogued third FCOM site (installer build changed) | Subtract `0x400000`, dump 16 bytes, treat as a new finding — don't assume the two known offsets are permanent |
+| Installer/FCOM | `setup.exe` "stops working" after a patcher update | `UaRo Patcher.exe` re-downloaded and overwrote the patched file with the original | Always use `UaRO Settings.app` (re-patches every launch); never the patcher's own in-app Settings button |
+| Bottle/Config | Launcher errors "a bottle with that name does not exist" | Hardcoded bottle name doesn't match the real one | Resolve the actual bottle name/UUID dynamically, don't hardcode across machines |
+| Runtime/Wine | Patcher stuck forever at "Getting patch_main.txt...", blank white panel | Wine Gecko not installed — this is a hard dependency, not cosmetic | Pre-install via `winetricks -q gecko` (Step 9) before ever launching the patcher |
+| Runtime/Wine | Wine Gecko Installer prompt never reappears, patcher permanently stuck | Clicking **Cancel** instead of Install appears to make Wine remember the decision and never re-prompt | Always click **Install**; better yet, pre-install non-interactively so the prompt never appears live |
+| Launcher/Signing | "Program Error" dialog for `UaRo Patcher.exe` on an older install (built before this fix existed) | Launcher doesn't yet have `ShowCrashDialog=0` + the retry loop | Rebuild `uaro-launch` per Step 11's current version; verify with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog` |
+| Input/Keyboard | `Cmd+A`/`Cmd+Z` (or other Alt-style menu shortcuts) do nothing in-game, but `Cmd+C`/`Cmd+V`/other Cmd-shortcuts work fine | Whisky's forked Wine injects a hidden Edit menu that intercepts `Cmd+A`/`Cmd+Z`/`Cmd+C`/`Cmd+X`/`Cmd+V` before the game ever sees them ([Whisky-App/Whisky#1060](https://github.com/Whisky-App/Whisky/issues/1060)) | Apply Step 9b: set `LeftOptionIsAlt`/`RightOptionIsAlt`, then use `Option+<letter>` in-game instead of `Cmd+<letter>` for menu shortcuts — leaves `Cmd+C`/`Cmd+V` untouched, no trade-off |
+| Input/Keyboard | In-game paste needs `Ctrl+V` instead of `Cmd+V` (on a bottle set up with an earlier version of this skill) | An earlier version of Step 9b fixed the above by disabling the hidden Edit menu entirely — which fixed `Cmd+A`/`Cmd+Z` but broke `Cmd+V`'s automatic paste as a side effect | Undo it: `wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f`, then apply the current Step 9b (`LeftOptionIsAlt`/`RightOptionIsAlt`) instead — fixes both with no trade-off |
+| Input/Keyboard | Number-row hotkeys (`1`-`9`, Skill Bar/Hotkey Bar) do nothing, or rebinding one shows "Unspecified value", while letters and `Option`-shortcuts work fine | Mac's active input source is Chinese, Japanese, Korean, Thai, or another non-ASCII input method — it intercepts number keys system-wide for candidate selection before the game ever sees them; unrelated to Step 9b | Switch to an English/ABC input source before playing. If it keeps reverting specifically on the game window, check System Settings → Keyboard → Input Sources → *"Automatically switch to a document's input source"* — see *Known open issues* |
 
 ## Uninstall / rollback
 

@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-27
+
+### Changed
+- Added a Table of contents (anchor-linked) near the top of `SKILL.md`, splitting it into "Setup" (the linear, execute-in-order steps) and "Reference" (Known open issues, Common Gotchas, Uninstall, Credits — consulted as needed, not part of the install sequence).
+- Moved Step 9b (menu-shortcut keybind fix) back to its correct numerical position, right after Step 9 — it had been appended after "Known open issues" when first added, out of sequence with the rest of the steps.
+- Tagged every entry in "Known open issues" and every row of "Common Gotchas" with a `Category` (`Input/Keyboard`, `Crash/Gameplay`, `Runtime/Wine`, `Launcher/Signing`, etc.) so both a human skim and an AI keyword search can jump straight to the relevant rows instead of scanning the whole table.
+- No functional/procedural content changed — this is a pure findability/navigation pass, prompted by `SKILL.md` growing large enough that locating a specific step or gotcha by scrolling alone was getting slower than it should be.
+
 ## [0.2.0] - 2026-07-26
 
 ### Fixed
