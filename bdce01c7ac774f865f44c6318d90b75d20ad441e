@@ -1,0 +1,13 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom (anticipated, not yet hit live): this skill had no gate stopping
+it from running on an Intel Mac, where it would silently proceed until
+failing later, confusingly, at Step 3.
+
+Root cause: confirmed directly (not assumed) that Whisky.app's actual
+binary is Mach-O arm64-only with no Intel slice, and Whisky's own
+Homebrew cask metadata declares `arch: arm64` as a hard requirement —
+there is no Intel-compatible path through this skill at all.
+
+Fix: added a hard pre-flight gate on `uname -m`, with a gentle
+(not blunt) message to the user if it fails.
