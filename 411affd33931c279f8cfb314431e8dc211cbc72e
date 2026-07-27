@@ -1,0 +1,13 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom (reasoned preventively, not yet observed as a live crash report):
+Step 4's runtime download and Step 7's installer wizard are both long,
+unattended waits with no user interaction in between.
+
+Root cause: unlike a browser download, neither `curl` nor Wine/Inno Setup
+requests its own "stay awake" power assertion — a laptop that idles into
+sleep mid-download or mid-install would stall with no clear indication
+of why, easily misread as a hang or crash.
+
+Fix: wrapped both waits in `caffeinate -i`, which holds the assertion
+only as long as the wrapped command runs and releases automatically on exit.
