@@ -17,6 +17,18 @@ not just one or two.**
    one-line summary) — see the two best examples: commits `38092d5` and
    `c1db2eb`.
 
+   **Also check `git notes`** (`git log --show-notes`, or
+   `git notes show <hash>`) — 13 older commits that predate this
+   commit-message framework had that same Symptom/Ruled out/Root
+   cause/Fix detail retroactively attached as notes instead of rewriting
+   already-pushed history. **Notes don't show up in a plain `git log` or
+   a fresh `git clone`/`git fetch`** — the ref (`refs/notes/commits`)
+   has to be fetched explicitly:
+   `git fetch origin refs/notes/commits:refs/notes/commits`, then
+   `git log --show-notes`. Easy to forget this ref exists at all if you
+   don't already know to look for it — which is exactly the kind of gap
+   this file exists to close.
+
 2. **`CHANGELOG.md`** — curated, per-version (Keep a Changelog format),
    human-facing "what changed and why" summary. This is the closest
    equivalent to a traditional changelog/troubleshooting summary — check it
