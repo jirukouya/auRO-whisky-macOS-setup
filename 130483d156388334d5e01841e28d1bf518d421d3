@@ -1,0 +1,25 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: number-row hotkeys (1-9, Skill Bar/Hotkey Bar) completely
+unresponsive in-game; rebinding one showed "Unspecified value" instead
+of registering the keypress.
+
+Ruled out: initially hypothesized a "stuck Alt modifier" left over from
+Option-mapped-to-Alt shortcut use (a known Wine Mac-driver bug class) —
+disproven by the user's counter-evidence (had not used any Option+letter
+combo before the symptom appeared; Option+W/Option+S both worked
+correctly for movement). Also directly ruled out Step 9b's Option=Alt
+fix itself as the cause via an A/B test: removed the
+LeftOptionIsAlt/RightOptionIsAlt registry keys entirely and the symptom
+persisted unchanged.
+
+Root cause: the Mac's active keyboard input source was a CJK (Chinese)
+input method, which intercepts number-row keys system-wide for
+candidate-word selection before Wine or the game ever receives them —
+unrelated to Wine, Whisky, or Step 9b entirely.
+
+Fix: documented as a new Known Open Issue with the fix (switch to an
+English/ABC input source) and the macOS per-window-input-source-memory
+complication. (A live `force-english-input` helper was also built for
+the user's own machine per their explicit instruction — intentionally
+NOT included in this commit or documented in SKILL.md.)
