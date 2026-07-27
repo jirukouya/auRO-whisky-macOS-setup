@@ -1,0 +1,13 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: a cold-read pass (reading SKILL.md straight through as if
+executing it fresh, with no prior context) surfaced several concrete
+comprehension gaps.
+
+Root cause: Homebrew's installer doesn't add itself to the *current*
+shell's PATH (only future ones), an inconsistent placeholder-substitution
+convention between sections, a naming mismatch for INSTALLER_SOURCE
+between where it's defined and where it's used, and a missing progress-table
+row for Step 2a.
+
+Fix: fixed each of the four gaps directly in SKILL.md.
