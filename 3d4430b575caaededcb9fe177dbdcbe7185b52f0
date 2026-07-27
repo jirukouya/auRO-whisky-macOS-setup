@@ -1,0 +1,16 @@
+[Retroactive note added later, per the Symptom/Ruled out/Root cause/Fix commit-message framework]
+
+Symptom: in-game menu shortcuts (Cmd+A, Cmd+Z) weren't registering at all.
+
+Root cause: confirmed by reading Wine's actual source (not guessed) —
+Whisky's forked Wine (winemac.drv/cocoa_app.m) injects a hidden "Edit"
+menu into every Wine window, bound to Cmd+X/C/V/A/Z. macOS matches that
+menu's key equivalents before the keypress ever reaches the game, so
+Cmd+A/Cmd+Z specifically get swallowed. Already reported upstream:
+Whisky-App/Whisky#1060.
+
+Fix: disabled the hidden Edit menu via the Mac Driver registry
+(`EditMenu` key).
+
+Note: this fix was later found to have a real side-effect cost and was
+superseded — see 59b7be7's note for what broke and why.
