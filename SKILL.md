@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.10.0
+version: 0.12.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -54,7 +54,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
 - **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the three launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
-- **A different risk, easy to conflate with the one above: `$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`, and other inline (non-placeholder) shell variables used directly in a bash block are not guaranteed to survive into a separately-run *later* block either.** Many agent tool-execution harnesses reset shell state between tool calls and only guarantee the working directory persists — a variable exported in one call is not reliably still set two calls later, even within the same Step. Prefer running each Step's full command sequence as one combined shell invocation so this never comes up. If your tooling forces a Step's commands across multiple separate calls anyway, re-derive/re-export the values a given block actually uses at the top of that block — don't assume something set several blocks ago is still there. See the callout right after the Parameters table below for the one-liners to re-derive the three most commonly reused ones (`$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`); step-local variables (`$SETUP` in Step 8, `$META`/`$GUID` in Steps 5/10, `$SUPPORT` in Step 4, etc.) follow the same rule using that step's own definition line.
+- **A different risk, easy to conflate with the one above: `$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`, and other inline (non-placeholder) shell variables used directly in a bash block are not guaranteed to survive into a separately-run *later* block either.** Many agent tool-execution harnesses reset shell state between tool calls and only guarantee the working directory persists — a variable exported in one call is not reliably still set two calls later, even within the same Step. Prefer running each Step's full command sequence as one combined shell invocation so this never comes up. If your tooling forces a Step's commands across multiple separate calls anyway, re-derive/re-export the values a given block actually uses at the top of that block — don't assume something set several blocks ago is still there. See the callout right after the Parameters table below for the one-liners to re-derive the three most commonly reused ones (`$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`); step-local variables (`$SETUP` in Step 8, `$META`/`$GUID` in Steps 5/10, `$SUPPORT` in Step 4, `$APPS` in Step 11, etc.) follow the same rule using that step's own definition line. `$APPS` specifically has a re-derivation one-liner of its own (right after Step 11's `mkdir` loop) that reads back a real on-disk fact (whether `/Applications/UaRO Game.app` exists) rather than trying to remember a yes/no answer given several blocks ago — prefer that pattern (checking something real on disk) over remembering a decision, wherever a step's later blocks can.
 - **Some steps may trigger a macOS admin/login password prompt (`sudo`) — expected, not a sign of a hijacked machine.** Homebrew's installer (Step 1) commonly needs it the first time it creates `/opt/homebrew`; Rosetta (Step 2) occasionally does too. Warn the user *before* running that command that a password prompt may appear. If the shell running these commands has no interactive terminal attached, the prompt can't be answered programmatically at all — it will hang or fail outright (`sudo: a password is required`) instead of actually showing a box to type into. If that happens, tell the user to open a normal Terminal window themselves and run that one command directly — only they should ever type their own Mac password, never ask them to tell it to you.
 
 ## 1a. Progress table (post this, updated, after every single step)
@@ -98,10 +98,14 @@ Rules for filling it in:
 | `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders, detected **by file size, not filename** (see 2b) | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. The installer itself sits behind a login wall (`https://uaro.net/cp/?module=account&action=login` — user-provided, not something you can fetch on their behalf), so this is always a human-driven download, never one you can script end-to-end. |
 
 > [!TIP]
-> **Re-derive these at the top of any code block that needs them, if it isn't the same shell invocation that first set them** (see Section 0's note on shell-state not persisting across separate tool calls):
+> **Prepend these three lines to the start of every code block from Step 4 onward that touches `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY`, every single time — don't try to judge whether this happens to be the same shell invocation that last set them.** That judgment call is exactly the failure mode this callout exists to remove: reassigning an already-correct value is a harmless no-op, so there's no cost to always doing it, only a cost to skipping it and guessing wrong (see Section 0's note on shell-state not persisting across separate tool calls, and Step 11's `$APPS`/`$EXE` blocks for the same idea applied to that step's own variables).
 > ```bash
 > BOTTLE_NAME="uaro"                                              # or whatever was actually decided for this machine
-> GAME_DIR="$HOME/Games/UaRO World of Your Dream"                 # or whatever was actually decided for this machine
+> GAME_DIR="$HOME/Games/UaRO World of Your Dream"                 # the real value decided at Step 1/2a for this
+>                                                                  # machine -- OR, if Step 7 found the installer
+>                                                                  # wrote somewhere else, the real adopted path from
+>                                                                  # there instead. Never paste this literal default
+>                                                                  # without checking which one actually applies.
 > WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
 > ```
 
@@ -483,13 +487,17 @@ xxd -s $((0x21E39)) -l 4 "$SETUP"     # confirm context reads dcd8dfe0 before pa
 printf '\xdd\xd8\xb4\x40' | dd of="$SETUP" bs=1 seek=$((0x21E39)) count=4 conv=notrunc
 ```
 
-**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results. **`<GAME_DIR>` here is a placeholder, not a live shell variable — substitute the real resolved path before running this:**
+**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results. **`<GAME_DIR>` here is a placeholder, not a live shell variable — substitute the real resolved path before running this.** The `cat > ... <<'PYEOF'` wrapper below is what actually creates and runs the file — same pattern as Step 10's Python patch script, not just an illustrative snippet:
 
-```python
+```bash
+cat > /tmp/patch_setup_exe.py <<'PYEOF'
 path = "<GAME_DIR>/setup.exe"
 with open(path, "r+b") as f:
     f.seek(0x2C0CD); assert f.read(1) == b'\xdc'; f.seek(0x2C0CD); f.write(b'\xd8')
     f.seek(0x21E39); assert f.read(4) == bytes.fromhex("dcd8dfe0"); f.seek(0x21E39); f.write(bytes.fromhex("ddd8b440"))
+print("done")
+PYEOF
+python3 /tmp/patch_setup_exe.py
 ```
 
 **MANDATORY verification — byte-diff against the backup, don't just trust the write succeeded:**
@@ -599,13 +607,14 @@ cp "$GAME_DIR/savedata/OptionInfo.lua" "$GAME_DIR/savedata/OptionInfo.lua.orig-b
 GUID="{$(uuidgen | tr a-z A-Z)}"
 ```
 
-Write a small Python script **to a file** (not a heredoc, since the script body itself needs to write backslash-heavy content — see Section 0's heredoc warning) — **`<GAME_DIR>`, `<GUID_FROM_UUIDGEN>`, `<CHOSEN_WIDTH>`, `<CHOSEN_HEIGHT>` below are placeholders to substitute with real resolved values before this runs, same rule as Section 0's placeholder note and the worked `<UUID>` example in Step 5.** The `cat > ... <<'PYEOF'` wrapper below is what actually creates the file — the script content shown isn't just illustrative, it's what gets written:
+Write a small Python script **to a file** (not a heredoc, since the script body itself needs to write backslash-heavy content — see Section 0's heredoc warning) — **`<GAME_DIR>`, `<CHOSEN_WIDTH>`, `<CHOSEN_HEIGHT>` below are placeholders to substitute with real resolved values before this runs, same rule as Section 0's placeholder note and the worked `<UUID>` example in Step 5.** `guid` is deliberately *not* a placeholder here — `$GUID` was just computed as a real shell variable above, and the delimiter below must stay quoted (`<<'PYEOF'`) for `DX9DEVICENAME`'s backslash-heavy content a few lines down, which would block `$GUID` from interpolating even if written that way — so instead it's passed through the environment, read back via `os.environ`, avoiding a manual-retype step that's easy to fumble. The `cat > ... <<'PYEOF'` wrapper below is what actually creates the file — the script content shown isn't just illustrative, it's what gets written:
 
 ```bash
 cat > /tmp/patch_optioninfo.py <<'PYEOF'
+import os
 import re
 path = "<GAME_DIR>/savedata/OptionInfo.lua"
-guid = "<GUID_FROM_UUIDGEN>"
+guid = os.environ["GUID"]   # set by $GUID at invocation below, not hand-typed -- see the note above this block
 W, H = <CHOSEN_WIDTH>, <CHOSEN_HEIGHT>   # first-pass guess only — use the RESOLUTION parameter's auto-detected
                                           # native-display value from this file's Parameters table (Section 1,
                                           # not "Step 1" — see the Table of Contents note on the two numbering
@@ -645,8 +654,10 @@ with open(path, "w") as f:
     f.write(content)
 print("done")
 PYEOF
-python3 /tmp/patch_optioninfo.py
+GUID="$GUID" python3 /tmp/patch_optioninfo.py
 ```
+
+If `$GUID` isn't set in this shell (a separate tool call from the one that ran `uuidgen` above), re-derive it the same way Section 0 describes for other step-local variables — don't hand-type a placeholder GUID, since that value must actually be unique per install.
 
 **MANDATORY verification — don't eyeball it with `cat`, count the actual bytes:**
 
@@ -669,53 +680,62 @@ python3 -c "print(repr(open('$GAME_DIR/savedata/OptionInfo.lua','rb').read()))" 
 
 **Before building anything below — ask about `UaRO Game.app` specifically, every time this step runs (a fresh install, not just a Step 2a retrofit on an existing one).** It's the one launcher with an accepted, unresolved risk (see its own note further down, and *Known open issues*) — `UaRO Patcher.app`/`UaRO Settings.app` carry no such trade-off and don't need this checkpoint. Ask something like: *"There's an optional third launcher, `UaRO Game`, that skips the patcher for a faster relaunch — but it has no way to detect a stale/unpatched client if a patch ships while it's being used instead of the Patcher. Want me to build it along with the other two, or just Patcher + Settings for now?"*
 
-**Set `$APPS` right after that answer — it's the single toggle every command below reads from, so there's no separate place to remember to drop `UaRO Game.app` from:**
+**Set `$APPS` right after that answer — it's the single toggle every command below reads from, so there's no separate place to remember to drop `UaRO Game.app` from.** Set it and use it for the `mkdir` below in the same shell invocation:
 
 ```bash
-if [[ "$BUILD_GAME_APP" == "yes" ]]; then
+if [[ "$BUILD_GAME_APP" == "yes" ]]; then   # "yes"/"no" based on the answer just given -- not a Section 1 parameter
   APPS=("UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app")
 else
   APPS=("UaRO Patcher.app" "UaRO Settings.app")
 fi
-```
-
-`$BUILD_GAME_APP` isn't a parameter from Section 1 — set it to `"yes"` or `"no"` yourself based on the answer just given, right before the `if` above. Every loop and command for the rest of this step iterates `"${APPS[@]}"` rather than naming bundles literally, so a declined `UaRO Game.app` is simply never in the array — nothing else in this step needs to know the decision was made. It can always be added later via Step 2a's own migration check, which asks this same question for existing installs (rebuild `$APPS` with all three there, since that path only runs when the answer is "add it").
-
-```bash
 for APP in "${APPS[@]}"; do
   mkdir -p "/Applications/$APP/Contents/MacOS"
 done
 ```
 
-`Info.plist` (parameterize `name`/`display name`/`identifier`/`executable` per bundle — shown below for `UaRO Patcher.app`). **Don't forget `CFBundleDisplayName` when mirroring** — it's easy to update `CFBundleName` and miss its sibling, leaving all three bundles displaying "UaRO Patcher" in Finder/Get Info regardless of which one is actually open:
+Every loop and command for the rest of this step iterates `"${APPS[@]}"` rather than naming bundles literally, so a declined `UaRO Game.app` is simply never in the array — nothing else in this step needs to know the decision was made. It can always be added later via Step 2a's own migration check, which asks this same question for existing installs.
+
+**`$APPS` is not on Section 0's list of things safe to assume persist — re-derive it at the top of every later block in this step, the same way as `$BOTTLE_NAME`/`$GAME_DIR`.** Don't re-ask the user or re-run the `if`/`else` above from memory — the `mkdir` loop just above already created (or didn't create) `/Applications/UaRO Game.app` on disk, so later blocks can check that directly instead of trusting a remembered decision:
 
 ```bash
-cat > "/Applications/UaRO Patcher.app/Contents/Info.plist" <<'PLIST'
+APPS=("UaRO Patcher.app" "UaRO Settings.app")
+[[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
+```
+
+This one-liner is safe to paste at the top of any later block in this step that uses `$APPS` — in bash it's a genuine no-op if `$APPS` is already correctly set (reassigning the same array), and it works whether or not this is a fresh shell invocation, so there's no need to first check whether re-derivation is actually necessary.
+
+`Info.plist` (`name`/`display name`/`identifier`/`executable` differ per bundle, everything else about the XML is identical) — generated for all three bundles in `$APPS` by one loop, rather than shown once for `UaRO Patcher.app` and left to be mirrored by hand for the other two (that hand-mirroring is exactly how a `CFBundleName` update misses its `CFBundleDisplayName` sibling, leaving a bundle displaying "UaRO Patcher" in Finder/Get Info while actually being `UaRO Settings.app`). **This heredoc is deliberately unquoted (`<<PLIST`, not `<<'PLIST'`)** — unlike the launcher scripts and `uaro-cli` further down, this content has no backslash-heavy data needing protection, and unquoted lets `$NAME`/`$ID`/`$EXEC` interpolate per iteration instead of being hand-edited three times:
+
+```bash
+APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
+[[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
+
+for APP in "${APPS[@]}"; do
+  case "$APP" in
+    "UaRO Patcher.app")  NAME="UaRO Patcher";  ID="com.uaro.patcher";  EXEC="uaro-patcher" ;;
+    "UaRO Settings.app") NAME="UaRO Settings"; ID="com.uaro.settings"; EXEC="uaro-settings" ;;
+    "UaRO Game.app")     NAME="UaRO Game";     ID="com.uaro.game";     EXEC="uaro-game" ;;
+  esac
+  cat > "/Applications/$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key><string>UaRO Patcher</string>
-	<key>CFBundleDisplayName</key><string>UaRO Patcher</string>
-	<key>CFBundleIdentifier</key><string>com.uaro.patcher</string>
+	<key>CFBundleName</key><string>$NAME</string>
+	<key>CFBundleDisplayName</key><string>$NAME</string>
+	<key>CFBundleIdentifier</key><string>$ID</string>
 	<key>CFBundleVersion</key><string>1.0</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleIconFile</key><string>AppIcon.icns</string>
-	<key>CFBundleExecutable</key><string>uaro-patcher</string>
+	<key>CFBundleExecutable</key><string>$EXEC</string>
 	<key>LSMinimumSystemVersion</key><string>11.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLIST
+done
 ```
-
-Write the same file for every other bundle in `$APPS` (so `UaRO Settings.app`, and `UaRO Game.app` if it's in the array), each with the same `cat > ... <<'PLIST'` wrapper — only these four values change per bundle, everything else (including the XML structure) is identical:
-
-| Bundle | `CFBundleName` / `CFBundleDisplayName` | `CFBundleIdentifier` | `CFBundleExecutable` |
-|---|---|---|---|
-| `UaRO Settings.app` | `UaRO Settings` | `com.uaro.settings` | `uaro-settings` |
-| `UaRO Game.app` | `UaRO Game` | `com.uaro.game` | `uaro-game` |
 
 Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), all three apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
 
@@ -870,6 +890,8 @@ for spec in "16 16" "32 16@2x" "32 32" "64 32@2x" "128 128" "256 128@2x" "256 25
 done
 iconutil -c icns UaRO.iconset -o AppIcon.icns
 
+APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
+[[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
 for APP in "${APPS[@]}"; do
 	mkdir -p "/Applications/$APP/Contents/Resources"
 	cp AppIcon.icns "/Applications/$APP/Contents/Resources/AppIcon.icns"
@@ -879,13 +901,23 @@ done
 The source PNG is only 48×48 (nothing higher-res is embedded anywhere in the game files), so `sips` is upscaling for the 256/512/1024 tiers — it'll look a little soft at the largest Launchpad/Finder preview sizes, but is fine for a desktop shortcut. This step can run any time after `$GAME_DIR` is populated (Step 6 onward) and before the final `lsregister -f` below, since that call is what makes Launch Services notice the new icon — if the apps were already registered without an icon, re-run `lsregister -f` plus `killall Dock; killall Finder` to bust the icon cache after adding it later.
 
 ```bash
-typeset -A EXE=("UaRO Patcher.app" "uaro-patcher" "UaRO Settings.app" "uaro-settings" "UaRO Game.app" "uaro-game")
+APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
+[[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 for APP in "${APPS[@]}"; do
-  chmod +x "/Applications/$APP/Contents/MacOS/${EXE[$APP]}"
+  # A case statement, not an associative array -- typeset -A/declare -A needs bash 4+
+  # or zsh, but this whole file is fenced as plain ```bash and macOS's actual /bin/bash
+  # is still 3.2, which rejects -A outright. case is portable to both.
+  case "$APP" in
+    "UaRO Patcher.app")  EXE="uaro-patcher" ;;
+    "UaRO Settings.app") EXE="uaro-settings" ;;
+    "UaRO Game.app")     EXE="uaro-game" ;;
+  esac
+
+  chmod +x "/Applications/$APP/Contents/MacOS/$EXE"
   plutil -lint "/Applications/$APP/Contents/Info.plist"
-  zsh -n "/Applications/$APP/Contents/MacOS/${EXE[$APP]}"
+  zsh -n "/Applications/$APP/Contents/MacOS/$EXE"
 
   # Ad-hoc re-sign -- a freshly-built, never-signed bundle usually still
   # launches fine locally (no quarantine attribute to trigger a strict Gatekeeper
@@ -910,6 +942,8 @@ done
 **MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
 
 ```bash
+APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
+[[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
 for APP in "${APPS[@]}"; do
   codesign -dv "/Applications/$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
 done

@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-28
+
+### Fixed
+- The remaining four findings from the same fourth cold-read as 0.11.0:
+  - **Step 8's Python fallback (FCOM byte-patches) had no write-to-disk wrapper**, unlike Step 10's structurally identical script. Wrapped it in the same `cat > file <<'PYEOF' ... PYEOF` + `python3 file` pattern, verified against a synthetic binary with the exact pre-patch bytes at both offsets.
+  - **General pattern: blocks in Steps 4 onward relied on the executor remembering whether `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` were still set, rather than just always re-deriving them.** The Parameters-table TIP callout already had the one-liners, but framed them as something to reach for *if* re-derivation is judged necessary — exactly the judgment call that goes wrong. Reworded as a standing instruction to prepend all three unconditionally to any block that touches them, since reassigning an already-correct value is a harmless no-op.
+  - **That same TIP's `$GAME_DIR` line showed only the default value**, even though Step 7 explicitly instructs adopting a different real path if the installer redirected there — copying the TIP verbatim after that point would silently revert to the wrong directory. Reworded the comment to say so explicitly.
+  - **Step 11's `Info.plist` was only shown in full for `UaRO Patcher.app`**, with `UaRO Settings.app`/`UaRO Game.app` given as a 4-column table to hand-mirror — precisely how a `CFBundleName` update misses its `CFBundleDisplayName` sibling. Replaced with a single loop over `$APPS` that generates all three via an unquoted heredoc (safe here — no backslash-heavy content, unlike the launcher scripts) with a `case` statement supplying the three per-bundle values. Verified under `/bin/bash` (3.2): all three plists generated with correct, distinct values, all pass `plutil -lint`.
+
+## [0.11.0] - 2026-07-28
+
+### Fixed
+- Prompted by a fourth fresh, zero-context cold-read of the public repo — this one run *after* pushing, against the actual current `main`, so its findings were genuinely new rather than rediscoveries of already-fixed-but-unpublished work. Two of the three findings addressed here were regressions introduced by 0.10.0's own `$APPS` refactor:
+  - **`$APPS` (Step 11) was reused across three widely-separated code blocks with no re-derivation guidance**, unlike every other reused variable in this file — Section 0's list never mentioned it. Confirmed the actual failure mode: in bash, an unset `$APPS` makes `for APP in "${APPS[@]}"` silently iterate zero times (no error), so the "MANDATORY" verification loop right after also silently produces no output — success by omission, while the launcher bundles are never actually `chmod +x`'d, signed, or registered. Fixed by having every block after the first re-derive `$APPS` from a real on-disk fact (`[[ -d "/Applications/UaRO Game.app" ]]`) instead of trying to remember a yes/no answer from several blocks back — added to Section 0's list, with a note recommending this "check something real" pattern generally over remembering decisions.
+  - **`typeset -A EXE=(...)` (Step 11) is zsh/bash-4+ syntax inside a block fenced as plain ` ```bash `.** Confirmed macOS's actual `/bin/bash` is still 3.2.57, which rejects `-A` outright — under bash this made `${EXE[$APP]}` resolve to nothing, so `chmod +x ".../MacOS/"` (with the executable name dropped) silently succeeded against the directory instead of the binary, leaving every launcher non-executable. Replaced the associative array with an inline `case` statement (portable to both bash 3.2 and zsh), verified by actually running the reconstructed blocks under `/bin/bash` as separate processes (simulating real tool-call boundaries) for both the "build all three" and "decline Game.app" paths.
+  - **`$GUID` (Step 10) was computed as a real shell variable, then the very next block required manually retyping it as literal placeholder text** inside a heredoc that has to stay quoted for an unrelated reason (protecting `OptionInfo.lua`'s backslash-heavy `DX9DEVICENAME` content) — get the retype wrong and the game ships with the literal string `<GUID_FROM_UUIDGEN>` instead of a real GUID. Fixed by passing `$GUID` through the environment (`GUID="$GUID" python3 ...`, read back via `os.environ["GUID"]`) instead of requiring a manual substitution, verified by actually running the env-var passthrough.
+
 ## [0.10.0] - 2026-07-28
 
 ### Fixed
