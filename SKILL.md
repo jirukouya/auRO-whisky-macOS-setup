@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.12.0
+version: 0.13.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -101,8 +101,10 @@ Rules for filling it in:
 > **Prepend these three lines to the start of every code block from Step 4 onward that touches `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY`, every single time — don't try to judge whether this happens to be the same shell invocation that last set them.** That judgment call is exactly the failure mode this callout exists to remove: reassigning an already-correct value is a harmless no-op, so there's no cost to always doing it, only a cost to skipping it and guessing wrong (see Section 0's note on shell-state not persisting across separate tool calls, and Step 11's `$APPS`/`$EXE` blocks for the same idea applied to that step's own variables).
 > ```bash
 > BOTTLE_NAME="uaro"                                              # or whatever was actually decided for this machine
-> GAME_DIR="$HOME/Games/UaRO World of Your Dream"                 # the real value decided at Step 1/2a for this
->                                                                  # machine -- OR, if Step 7 found the installer
+> GAME_DIR="$HOME/Games/UaRO World of Your Dream"                 # the real value decided in Section 1 (Parameters)
+>                                                                  # above -- not "Step 1", see the Table of Contents
+>                                                                  # note on the two numbering schemes -- OR, if
+>                                                                  # Step 7 found the installer
 >                                                                  # wrote somewhere else, the real adopted path from
 >                                                                  # there instead. Never paste this literal default
 >                                                                  # without checking which one actually applies.
@@ -146,7 +148,8 @@ find ~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c -maxdepth 3
 **If a bottle already exists, also check whether it's missing (or carrying an outdated version of) any fix added to this skill since it was created** — don't wait for the user to describe a symptom before mentioning it. Right now that means Step 9b's keybind fix; substitute the real bottle name for `$BOTTLE_NAME`:
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 command -v wine64 >/dev/null || echo "runtime not linked yet — skip this check, Step 5 will sort it out"
 EDITMENU=$(wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu 2>/dev/null)
 OPTALT=$(wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt 2>/dev/null)
@@ -191,7 +194,11 @@ If more than one file matches, ask the user which one; if none match yet, the do
 **A file matching the size window isn't necessarily finished** — it could still be actively growing and just passing through that range on its way to a larger final size, or the browser could still be flushing the last bit to disk. Confirm the size is actually stable before treating it as done, the same "check, wait, recheck" idea used for the iCloud gotcha elsewhere in this skill:
 
 ```bash
-CANDIDATE="<matched_file>"   # from the find command above
+CANDIDATE="<matched_file>"   # <matched_file> is a placeholder -- substitute the actual path printed by the
+                             # find command above (e.g. /Users/you/Downloads/UaRO_Setup(1).zip), the same
+                             # substitute-before-running rule as Section 0's placeholder note and the worked
+                             # <UUID>/<GUID> examples in Steps 5 and 10 -- running this literally, unedited,
+                             # makes stat fail with "No such file or directory"
 SIZE1=$(stat -f%z "$CANDIDATE")
 sleep 5
 SIZE2=$(stat -f%z "$CANDIDATE")
@@ -380,7 +387,8 @@ All five calls are safe to run unconditionally — they're idempotent, even thou
 **Self-healing check — confirm `wine64` is actually reachable through this bottle before trusting it, don't wait until Step 7's crash to find out:**
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 command -v wine64 || echo "MISSING"
 ```
 
@@ -431,7 +439,8 @@ This is not paranoia — on a real run, files extracted to `~/Downloads` passed 
 > | 4 | **Completing the Setup Wizard** | ⚠️ **Uncheck "Launch \<game\>"** before clicking Finish — the game is not configured yet (Steps 8–11 still need to run first); launching now would run an unpatched, unconfigured copy |
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 # Note: this sed doubles each backslash (\\ per separator, not a single \) --
 # looks odd but is intentional/verified-safe: Windows path parsing collapses
 # redundant separators, and this exact form was confirmed working end-to-end
@@ -523,7 +532,8 @@ There's a second, more important reason to do this ahead of time: the native "Wi
 
 ```bash
 brew install winetricks   # if not already present
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 env | grep -i '^WINE'     # confirm WINEPREFIX actually points at the right bottle before proceeding
 winetricks -q gecko
 ```
@@ -531,7 +541,8 @@ winetricks -q gecko
 **Fallback, if winetricks isn't available or targets the wrong prefix — launch the patcher once on purpose and handle the prompt live:**
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 nohup wine64 "$GAME_DIR/UaRo Patcher.exe" >/tmp/uaro_patcher_gecko.log 2>&1 &
 disown
 ```
@@ -557,7 +568,8 @@ If the patcher then crashes right after Gecko finishes with a `Program Error` di
 **If this bottle previously had the old `EditMenu`-disable fix applied, undo it first** (check with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu` — any result at all, even empty, means it's set):
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f 2>/dev/null || true
 ```
 
@@ -568,7 +580,8 @@ pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running
 ```
 
 ```bash
-eval "$(whisky shellenv "$BOTTLE_NAME")"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt /t REG_SZ /d y /f
 wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAlt /t REG_SZ /d y /f
 wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v LeftOptionIsAlt
@@ -1275,6 +1288,15 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 | Installer/FCOM | Playing via `UaRO Game.app` for a while after a server-side patch, with no error or warning that anything's stale | `UaRO Game.app` skips the patcher entirely, so it never checks for or downloads new patches — whether the game client itself would refuse a stale version is unconfirmed | Run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped — see *Known open issues* for the unresolved risk |
 
 ## Uninstall / rollback
+
+> [!TIP]
+> **This section is explicitly supported as a standalone entry point in a brand-new session** (see README.md's "Updating an existing install" / uninstall flow) — unlike every step above, `$GAME_DIR` and `$BOTTLE_NAME` may never have been set at all in this conversation, not merely gone stale. Resolve them for real before the backup command below, e.g.:
+> ```bash
+> ls ~/Games                              # confirm the real game folder name
+> GAME_DIR="$HOME/Games/UaRO World of Your Dream"   # the real path for this machine, not the default verbatim
+> whisky list                             # confirm the real bottle name
+> BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
+> ```
 
 **Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen:
 

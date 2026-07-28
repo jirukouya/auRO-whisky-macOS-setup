@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-28
+
+### Fixed
+- Prompted by a fifth fresh, zero-context cold-read of the public repo, run against the actual current `main` (`f0d8c0f`, 0.12.0) rather than a stale unpushed local state:
+  - **Seven `eval "$(whisky shellenv "$BOTTLE_NAME")")` calls (Section 2a, Steps 5, 7, 9, and 9b) called bare `whisky` instead of resolving it via the `command -v whisky || echo .../WhiskyCmd` fallback used everywhere else in this file.** If Whisky was installed via Step 3's own documented GitHub-release fallback (no Homebrew symlink on PATH), all seven fail with `whisky: command not found`, silently breaking `WINEPREFIX`/`PATH` setup and cascading into `wine64`/`wineserver` "command not found" errors right after — the same bug class 0.4.0 already fixed, but only in the three launcher scripts, never here. Fixed by prepending `WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"` and calling `"$WHISKY" shellenv` at all seven sites.
+  - **The Uninstall / rollback section never re-derived `$GAME_DIR`/`$BOTTLE_NAME`** before using them, unlike every install step above. This mattered more than ordinary staleness because README.md explicitly documents uninstall as something that can be the *only* thing run in a brand-new session — meaning these variables might never have been set at all, not merely gone stale. Added an explicit re-derivation TIP at the top of the section, before the savedata backup command that uses `$GAME_DIR` first.
+  - **The Parameters-table TIP's `$GAME_DIR` line said the value was "decided at Step 1/2a"** — but `GAME_DIR` is decided in Section "1. Parameters," not "Step 1 — Homebrew" (unrelated), the exact ambiguous-numbering trap this file's own Table of Contents note warns against. Reworded to point at "Section 1 (Parameters)" explicitly, matching the wording already used correctly three lines away in Step 10.
+  - **Section 2b's `CANDIDATE="<matched_file>"` placeholder had only a terse one-line comment**, unlike the heavily-worked `<UUID>`/`<GUID>`/`<CHOSEN_WIDTH>` placeholder examples elsewhere in this file. Not a silent failure (a literal run throws a loud `stat: No such file or directory`), but inconsistent with how carefully every other placeholder here is flagged. Expanded the comment to match the file's established placeholder-substitution style.
+
 ## [0.12.0] - 2026-07-28
 
 ### Fixed
