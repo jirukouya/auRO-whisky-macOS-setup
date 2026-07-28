@@ -6,6 +6,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-28
+
+### Fixed
+- Prompted by a third fresh, zero-context cold-read of the public repo. Two of its six findings were genuine gaps (the other four had already been fixed locally in 0.9.0/0.9.1 but not yet pushed, so the agent — reading the stale published `main` — rediscovered already-solved problems):
+  - **Declining `UaRO Game.app` in Step 11 required manually omitting it from ~8 separate hardcoded three-item lists** (the `mkdir` loop, icon-copy loop, `Info.plist` mirroring, chmod/plutil/`zsh -n`/codesign/backup-copy/`lsregister` commands, both verification loops) — a real chance of leaving a stray, half-built `Game.app` after the user explicitly declined it. Replaced every hardcoded list with a single `$APPS` array set once right after the consent question; every loop/command for the rest of Step 11 now reads `"${APPS[@]}"` instead of naming bundles literally, so there's exactly one place the decision is recorded. The three standalone per-bundle command blocks (chmod/plutil/`zsh -n`/codesign/backup-copy/`lsregister`) were also merged into one loop over `$APPS` using a `typeset -A EXE` map from bundle name to executable name, cutting ~15 near-duplicate lines down to one loop body. Verified by extracting the reconstructed blocks and running them under `zsh -n` and actual execution, for both the "build all three" and "decline Game.app" branches.
+  - **`<CHOSEN_WIDTH>`/`<CHOSEN_HEIGHT>` in Step 10 had no shown derivation** from the `system_profiler SPDisplaysDataType | grep Resolution` output into two concrete integers — the Parameters table only described running the command, never parsing its output. Added the actual output format (`Resolution: 3456 x 2234 Retina`) and which two numbers to use to the `RESOLUTION` row, plus a matching worked example at Step 10's `<CHOSEN_WIDTH>`/`<CHOSEN_HEIGHT>` line itself.
+
+## [0.9.1] - 2026-07-27
+
+### Fixed
+- Remaining findings from the same second cold-read pass as 0.9.0 (all doc-clarity, no behavior change):
+  - **`UaRO_Setup.exe` (Step 6/7's installer) vs `setup.exe` (Step 8's FCOM-patch target, RO OpenSetup) were never explicitly distinguished**, despite the near-identical name — added a clarifying note at the top of Step 8.
+  - **`UaRo Patcher.exe` (lowercase "o", the real on-disk filename)** reads like a typo on first encounter next to `UaRO Patcher.app` (capital "O", the launcher bundle). Added a note at its first mention (Step 9) spelling out all four similarly-named files (`UaRo Patcher.exe`, `UaRO Patcher.app`, `uaRO.exe`, `UaRO_Setup.exe`) and what each one actually is.
+  - **Placeholder substitution (`<UUID>`, `<GUID_FROM_UUIDGEN>`, etc.) had no worked example** the first few times a reader actually has to do it. Added a concrete before/after example at Step 5's `<UUID>` substitution (the first place in the linear install this is required), and cross-referenced it from Step 10's script.
+
+## [0.9.0] - 2026-07-27
+
+### Fixed
+- Prompted by a second fresh, zero-context cold-read of the public repo (post-0.8.1), specifically re-checking whether the previous round's fixes held and looking for anything new. The three most severe findings this round, all addressed:
+  - **File-writing scripts shown as bare code fences with no write-to-disk command.** Step 10's `patch_optioninfo.py`, Step 11's `Info.plist` and all three launcher scripts (`uaro-patcher`/`uaro-settings`/`uaro-game`), and the `uaro-cli` helper were all printed as illustrative code blocks with no accompanying `cat > path <<'EOF'` wrapper actually creating the file — worse, the one place a heredoc *was* shown (`uaro-cli`'s install step) had a literal, never-resolved placeholder (`<paste the script above, with <BOTTLE_NAME>/<GAME_DIR> substituted>`) as its payload, which a literal run would write verbatim into `/opt/homebrew/bin/uaro-cli`, producing a broken file that still passes `chmod +x` and only fails at actual invocation. Every one of these is now a proper `cat > ... <<'DELIMITER'` block with the real content inline (merging the "here's what it looks like" and "now write it" steps into one, matching Step 4's existing `WhiskyWineVersion.plist` pattern) — verified by extracting each block, substituting placeholder values, and running the actual generated file/script through `zsh -n`, `plutil -lint`, or (for `OptionInfo.lua`'s `DX9DEVICENAME`) a raw byte-count check against the exact backslash pattern Step 10's own mandatory verification expects.
+  - **`INSTALLER_SOURCE` was never actually assigned as a shell variable, and Section 2b's prose misdescribed which branch Step 6's code actually takes.** 2b said the relocated download makes "Step 6's branch take the `cp` path, not `curl`" — but the matching value (`~/Games/UaRO_Setup.zip`) actually hits Step 6's *first* `if` branch (a no-op, already staged), not the `cp` branch (which is for some other already-downloaded local path). Added an explicit `INSTALLER_SOURCE=...` assignment in both 2b and Step 6, and corrected the prose.
+  - **Step 10's own script comment violated the numbering-scheme disambiguation note added in 0.8.0** — it said to pull a value from "Step 1's Parameters table," the exact "shared digit, different meaning" confusion that note exists to prevent (the Parameters table is in Section 1, not "Step 1 — Homebrew"). Reworded to avoid the ambiguous reference entirely.
+
 ## [0.8.1] - 2026-07-27
 
 ### Fixed

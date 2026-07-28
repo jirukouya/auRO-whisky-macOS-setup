@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.8.1
+version: 0.10.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -94,7 +94,7 @@ Rules for filling it in:
 |---|---|---|
 | `BOTTLE_NAME` | `uaro` | Resolve the *real* on-disk UUID freshly via `whisky list` every time — never hardcode a UUID across machines. |
 | `GAME_DIR` | `$HOME/Games/UaRO World of Your Dream` | Must NOT be under `~/Desktop`, `~/Documents`, or `~/Downloads` — see the iCloud gotcha below. `~/Games/<name>` or `~/Library/Application Support/<vendor>/<name>` are both confirmed-safe locations. |
-| `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. **Detect this machine's actual display first** (`system_profiler SPDisplaysDataType \| grep Resolution`), then offer that as the recommended default when asking the user, rather than asking with no context. Pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12 — different Macs have different native/scaled resolution lists, so the "right" answer genuinely varies by machine. |
+| `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. **Detect this machine's actual display first** (`system_profiler SPDisplaysDataType \| grep Resolution`), then offer that as the recommended default when asking the user, rather than asking with no context. The line it prints looks like `Resolution: 3456 x 2234 Retina` — the two bare integers either side of the `x` are the width and height to use wherever this file asks for `<CHOSEN_WIDTH>`/`<CHOSEN_HEIGHT>` (e.g. `3456` and `2234`; ignore the trailing `Retina`/`Main Display` words, and use just the first display line if the machine has more than one). Pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12 — different Macs have different native/scaled resolution lists, so the "right" answer genuinely varies by machine. |
 | `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders, detected **by file size, not filename** (see 2b) | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. The installer itself sits behind a login wall (`https://uaro.net/cp/?module=account&action=login` — user-provided, not something you can fetch on their behalf), so this is always a human-driven download, never one you can script end-to-end. |
 
 > [!TIP]
@@ -205,7 +205,13 @@ mkdir -p ~/Games
 mv "<matched_file>" ~/Games/UaRO_Setup.zip
 ```
 
-`INSTALLER_SOURCE` for Step 6 is now simply `~/Games/UaRO_Setup.zip` — a local path, so Step 6's branch takes the `cp` path, not `curl`.
+Set `INSTALLER_SOURCE` to that exact path so Step 6 can branch on it correctly:
+
+```bash
+INSTALLER_SOURCE=~/Games/UaRO_Setup.zip
+```
+
+This exact value matches Step 6's *first* `if` branch (already staged, nothing to fetch) — not the `curl` branch (a URL) or the `cp` branch (some other already-downloaded local path elsewhere). If this step wasn't used — the user handed you a URL directly, or a `.zip` sitting somewhere other than `~/Games/UaRO_Setup.zip` — set `INSTALLER_SOURCE` to that value instead before Step 6 runs; it isn't optional, Step 6's `if`/`elif`/`else` reads it as a real shell variable, not a placeholder.
 
 ## Step 1 — Homebrew
 
@@ -351,6 +357,11 @@ WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/
                                    # exist; the real path is always:
                                    # ~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>)
 
+# This is the first real test of Section 0's placeholder-substitution rule: read the
+# UUID `whisky list` just printed (e.g. `4F2A1B3C-5D6E-7F80-9A1B-2C3D4E5F6A7B`), then
+# write that literal string in place of <UUID> below -- e.g.
+#   META="$HOME/Library/.../Bottles/4F2A1B3C-5D6E-7F80-9A1B-2C3D4E5F6A7B/Metadata.plist"
+# not the placeholder text as shown.
 META="$HOME/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>/Metadata.plist"   # substitute the real UUID
 plutil -replace dxvkConfig.dxvk           -bool true                                  "$META"
 plutil -replace dxvkConfig.dxvkAsync      -bool true                                  "$META"
@@ -373,9 +384,10 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 
 ## Step 6 — Download & extract the uaRO installer
 
-`INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does). If 2b already relocated the download to `~/Games/UaRO_Setup.zip`, there's nothing to fetch — skip straight to extraction:
+`INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does). If 2b already relocated the download to `~/Games/UaRO_Setup.zip`, there's nothing to fetch — skip straight to extraction. **`$INSTALLER_SOURCE` must actually be set as a shell variable before the `if` below runs** — it's resolved, not a placeholder, so set it explicitly if this is a fresh shell invocation (same re-derivation rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` — see the callout after the Parameters table):
 
 ```bash
+INSTALLER_SOURCE=~/Games/UaRO_Setup.zip   # if 2b staged it; otherwise the URL or local path the user actually gave you
 mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
 if [[ "$INSTALLER_SOURCE" == ~/Games/UaRO_Setup.zip ]]; then
   : # already staged by 2b — nothing to do
@@ -447,6 +459,8 @@ If it landed somewhere else, **adopt that real path as `GAME_DIR` for every step
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
+**`setup.exe` here is a different file from `UaRO_Setup.exe`, the installer Step 6/7 just downloaded and ran — despite the near-identical name.** `UaRO_Setup.exe` is the Inno Setup installer, already done with its job by this point. `setup.exe` is RO OpenSetup, the game's own graphics-config tool, sitting inside `$GAME_DIR` (installed alongside the game itself, not related to Step 6/7's installer). This step patches that second file, not the first.
+
 Rosetta can't translate certain alternate x87 FCOM instruction encodings; running them crashes `setup.exe` with "Unhandled illegal instruction." Both sites are context-checked before writing, so a build that doesn't need a given site skips it safely.
 
 ```bash
@@ -492,6 +506,8 @@ ls -la "$SETUP" "$SETUP.orig-backup"   # sizes must match exactly
 ## Step 9 — Pre-install Wine Gecko (mandatory, before `UaRO Patcher.app` is ever launched)
 
 Do this right after Step 8, before the patcher is run for the first time. **This is a hard functional dependency, not a cosmetic prompt.** `UaRo Patcher.exe`'s initial patch-check runs through an embedded HTML/browser control — without Gecko it sits stuck at "Getting patch_main.txt..." forever, with a blank white panel and a progress bar that never moves.
+
+**Note the casing: `UaRo Patcher.exe` (lowercase "o") is the game's actual on-disk filename, used consistently throughout this file wherever the raw `.exe` inside `$GAME_DIR` is meant — not a typo.** It's different from `UaRO Patcher.app` (capital "O"), the launcher bundle Step 11 builds in `/Applications` that runs this `.exe`, and from `uaRO.exe`/`UaRO_Setup.exe` (the game client and the installer, both separate files). All four names are real and intentional; none are interchangeable.
 
 There's a second, more important reason to do this ahead of time: the native "Wine Gecko Installer" dialog (source: `dl.winehq.org` — legitimate and currently working, unrelated to the dead `data.getwhisky.app` endpoint used elsewhere in this process) appears to show only **once**. Clicking **Cancel** instead of **Install** seems to make Wine remember that decision and never show the prompt again — leaving the patcher permanently stuck with no further recovery path short of manually re-triggering a Gecko install. Pre-installing removes this one-way door entirely.
 
@@ -583,15 +599,19 @@ cp "$GAME_DIR/savedata/OptionInfo.lua" "$GAME_DIR/savedata/OptionInfo.lua.orig-b
 GUID="{$(uuidgen | tr a-z A-Z)}"
 ```
 
-Write a small Python script **to a file** (not a heredoc) to do the substitution reliably:
+Write a small Python script **to a file** (not a heredoc, since the script body itself needs to write backslash-heavy content — see Section 0's heredoc warning) — **`<GAME_DIR>`, `<GUID_FROM_UUIDGEN>`, `<CHOSEN_WIDTH>`, `<CHOSEN_HEIGHT>` below are placeholders to substitute with real resolved values before this runs, same rule as Section 0's placeholder note and the worked `<UUID>` example in Step 5.** The `cat > ... <<'PYEOF'` wrapper below is what actually creates the file — the script content shown isn't just illustrative, it's what gets written:
 
-```python
-# /tmp/patch_optioninfo.py
+```bash
+cat > /tmp/patch_optioninfo.py <<'PYEOF'
 import re
 path = "<GAME_DIR>/savedata/OptionInfo.lua"
 guid = "<GUID_FROM_UUIDGEN>"
 W, H = <CHOSEN_WIDTH>, <CHOSEN_HEIGHT>   # first-pass guess only — use the RESOLUTION parameter's auto-detected
-                                          # native-display value from Step 1's Parameters table; Step 12 will
+                                          # native-display value from this file's Parameters table (Section 1,
+                                          # not "Step 1" — see the Table of Contents note on the two numbering
+                                          # schemes). Worked example: system_profiler prints
+                                          # "Resolution: 3456 x 2234 Retina" -> W, H = 3456, 2234 (see the
+                                          # RESOLUTION row's own note on parsing that line). Step 12 will
                                           # overwrite these correctly via RO OpenSetup's own Apply flow regardless
 
 with open(path) as f:
@@ -624,9 +644,7 @@ if 'OptionInfoList["OLD_HEIGHT"]' not in content:
 with open(path, "w") as f:
     f.write(content)
 print("done")
-```
-
-```bash
+PYEOF
 python3 /tmp/patch_optioninfo.py
 ```
 
@@ -649,17 +667,30 @@ python3 -c "print(repr(open('$GAME_DIR/savedata/OptionInfo.lua','rb').read()))" 
 
 **Standing rule, not just for this initial build: any future fix that touches one launcher's script content (`uaro-patcher`, `uaro-settings`, or `uaro-game`) must be applied to all three where it's actually relevant**, unless the fix is genuinely specific to one (e.g. the crash-dialog mitigation and the patch-check both only apply to `uaro-patcher`, since only it runs the patcher). Whenever any of the three scripts is edited after this initial build — including by Step 2a's healing checks, or by any later session — **re-sign that bundle afterward** (see the `codesign` step below); an unsigned or stale-signed bundle after edits is the kind of thing that works today and silently breaks on a future macOS update.
 
-**Before building anything below — ask about `UaRO Game.app` specifically, every time this step runs (a fresh install, not just a Step 2a retrofit on an existing one).** It's the one launcher with an accepted, unresolved risk (see its own note further down, and *Known open issues*) — `UaRO Patcher.app`/`UaRO Settings.app` carry no such trade-off and don't need this checkpoint. Ask something like: *"There's an optional third launcher, `UaRO Game`, that skips the patcher for a faster relaunch — but it has no way to detect a stale/unpatched client if a patch ships while it's being used instead of the Patcher. Want me to build it along with the other two, or just Patcher + Settings for now?"* **If the user declines, omit `UaRO Game.app` from every list in this step below** — the `mkdir` loop, the `Info.plist` mirroring, its own script section, the icon-copy loop, and the `chmod`/`plutil`/`zsh -n`/`codesign`/backup-copy/`lsregister` commands and both verification loops — and build only `UaRO Patcher.app` and `UaRO Settings.app`. It can always be added later via Step 2a's own migration check, which asks this same question for existing installs.
+**Before building anything below — ask about `UaRO Game.app` specifically, every time this step runs (a fresh install, not just a Step 2a retrofit on an existing one).** It's the one launcher with an accepted, unresolved risk (see its own note further down, and *Known open issues*) — `UaRO Patcher.app`/`UaRO Settings.app` carry no such trade-off and don't need this checkpoint. Ask something like: *"There's an optional third launcher, `UaRO Game`, that skips the patcher for a faster relaunch — but it has no way to detect a stale/unpatched client if a patch ships while it's being used instead of the Patcher. Want me to build it along with the other two, or just Patcher + Settings for now?"*
+
+**Set `$APPS` right after that answer — it's the single toggle every command below reads from, so there's no separate place to remember to drop `UaRO Game.app` from:**
 
 ```bash
-for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+if [[ "$BUILD_GAME_APP" == "yes" ]]; then
+  APPS=("UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app")
+else
+  APPS=("UaRO Patcher.app" "UaRO Settings.app")
+fi
+```
+
+`$BUILD_GAME_APP` isn't a parameter from Section 1 — set it to `"yes"` or `"no"` yourself based on the answer just given, right before the `if` above. Every loop and command for the rest of this step iterates `"${APPS[@]}"` rather than naming bundles literally, so a declined `UaRO Game.app` is simply never in the array — nothing else in this step needs to know the decision was made. It can always be added later via Step 2a's own migration check, which asks this same question for existing installs (rebuild `$APPS` with all three there, since that path only runs when the answer is "add it").
+
+```bash
+for APP in "${APPS[@]}"; do
   mkdir -p "/Applications/$APP/Contents/MacOS"
 done
 ```
 
-`Info.plist` (parameterize `name`/`display name`/`identifier`/`executable` per bundle — shown for `UaRO Patcher.app`; mirror for `UaRO Settings.app` with `CFBundleName=UaRO Settings`, `CFBundleDisplayName=UaRO Settings`, `CFBundleIdentifier=com.uaro.settings`, `CFBundleExecutable=uaro-settings`; mirror for `UaRO Game.app` with `CFBundleName=UaRO Game`, `CFBundleDisplayName=UaRO Game`, `CFBundleIdentifier=com.uaro.game`, `CFBundleExecutable=uaro-game`). **Don't forget `CFBundleDisplayName` when mirroring** — it's easy to update `CFBundleName` and miss its sibling, leaving all three bundles displaying "UaRO Patcher" in Finder/Get Info regardless of which one is actually open:
+`Info.plist` (parameterize `name`/`display name`/`identifier`/`executable` per bundle — shown below for `UaRO Patcher.app`). **Don't forget `CFBundleDisplayName` when mirroring** — it's easy to update `CFBundleName` and miss its sibling, leaving all three bundles displaying "UaRO Patcher" in Finder/Get Info regardless of which one is actually open:
 
-```xml
+```bash
+cat > "/Applications/UaRO Patcher.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -676,13 +707,22 @@ done
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
+PLIST
 ```
+
+Write the same file for every other bundle in `$APPS` (so `UaRO Settings.app`, and `UaRO Game.app` if it's in the array), each with the same `cat > ... <<'PLIST'` wrapper — only these four values change per bundle, everything else (including the XML structure) is identical:
+
+| Bundle | `CFBundleName` / `CFBundleDisplayName` | `CFBundleIdentifier` | `CFBundleExecutable` |
+|---|---|---|---|
+| `UaRO Settings.app` | `UaRO Settings` | `com.uaro.settings` | `uaro-settings` |
+| `UaRO Game.app` | `UaRO Game` | `com.uaro.game` | `uaro-game` |
 
 Without `CFBundleIconFile` (and a matching icon actually placed in `Contents/Resources/`), all three apps silently fall back to the generic blank-document icon — easy to miss since nothing errors, it just looks unfinished in Launchpad/Dock.
 
-`UaRO Patcher.app/Contents/MacOS/uaro-patcher` — **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk; the app has no shell variables to fall back on when the user later double-clicks it:**
+`UaRO Patcher.app/Contents/MacOS/uaro-patcher` — **`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk; the app has no shell variables to fall back on when the user later double-clicks it.** The `cat > ... <<'EOF'` wrapper below is what actually creates the file — **the heredoc delimiter must stay quoted (`<<'EOF'`, not `<<EOF`)**, since the script body below has its own live `$pid`/`$code`/`$attempt`/`$WINEDLLOVERRIDES` variables that must reach disk literally, for `zsh` to evaluate when the app is later double-clicked — not get expanded by *this* shell at write time:
 
 ```bash
+cat > "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher" <<'EOF'
 #!/bin/zsh
 set -e
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
@@ -726,6 +766,7 @@ while [[ $attempt -le 2 ]]; do
     attempt=$((attempt + 1))
 done
 exit $code
+EOF
 ```
 
 **Why this doesn't cost anything while the game is running:** `wait $pid` is a blocking call on the process's actual exit, not a poll loop — this script spends zero CPU while the patcher/game session is active, and the wrapper process itself disappears the moment the session ends (confirmed on a real machine: no lingering process, no measurable CPU/memory footprint). Don't rewrite this as a `sleep`-and-check polling loop; that would burn CPU for no reason across a long play session.
@@ -734,9 +775,10 @@ exit $code
 
 `WINEDLLOVERRIDES` **must append**, never replace — `whisky shellenv` already exports DXVK overrides (`dxgi,d3d9,d3d10core,d3d11=n,b`); overwriting the variable disables DXVK and tanks FPS. `WINE_CPU_TOPOLOGY=4:0,1,2,3` stabilizes Gepard Shield's anti-debug CPU-detection routines (fixes crashes ~3s after login and `Gepard::T Code: 3::110::12` disconnects).
 
-`UaRO Settings.app/Contents/MacOS/uaro-settings` — same header, plus an idempotent re-patch of both FCOM sites (checks against the *post*-patch bytes so it skips cleanly if already done) before exec'ing `setup.exe`:
+`UaRO Settings.app/Contents/MacOS/uaro-settings` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, plus an idempotent re-patch of both FCOM sites (checks against the *post*-patch bytes so it skips cleanly if already done) before exec'ing `setup.exe`:
 
 ```bash
+cat > "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" <<'EOF'
 #!/bin/zsh
 set -e
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
@@ -765,11 +807,13 @@ _patch_setup_exe() {
 
 _patch_setup_exe
 exec wine64 "setup.exe" >/dev/null 2>&1
+EOF
 ```
 
-`UaRO Game.app/Contents/MacOS/uaro-game` — same header and stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
+`UaRO Game.app/Contents/MacOS/uaro-game` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, same stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
 
 ```bash
+cat > "/Applications/UaRO Game.app/Contents/MacOS/uaro-game" <<'EOF'
 #!/bin/zsh
 set -e
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
@@ -788,6 +832,7 @@ export WINE_CPU_TOPOLOGY=4:0,1,2,3
 wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /f >/dev/null 2>&1 || true
 
 exec wine64 "uaRO.exe"
+EOF
 ```
 
 **Known, unresolved risk — read before relying on this for real play.** `UaRO Game.app` never talks to the patcher, so it never checks for or downloads new patches. Confirmed (2026-07-27, one real machine) that this launches cleanly, produces a stable process tree, and reaches a working login on a bottle that was already fully up to date — **but there is no known way to verify whether `uaRO.exe` enforces its own version check.** If the server ships a new patch and this bottle hasn't run `UaRO Patcher.app` since, this script has no way of detecting that and will silently launch whatever's already on disk, which could be a stale client. This has not been tested across an actual patch cycle. **Recommended use:** run `UaRO Patcher.app` at least once per session (or whenever a patch is known to have shipped), and treat `UaRO Game.app` as a faster relaunch option in between — not a permanent replacement for the patcher. See *Known open issues* for the formal writeup of this risk.
@@ -825,7 +870,7 @@ for spec in "16 16" "32 16@2x" "32 32" "64 32@2x" "128 128" "256 128@2x" "256 25
 done
 iconutil -c icns UaRO.iconset -o AppIcon.icns
 
-for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+for APP in "${APPS[@]}"; do
 	mkdir -p "/Applications/$APP/Contents/Resources"
 	cp AppIcon.icns "/Applications/$APP/Contents/Resources/AppIcon.icns"
 done
@@ -834,30 +879,26 @@ done
 The source PNG is only 48×48 (nothing higher-res is embedded anywhere in the game files), so `sips` is upscaling for the 256/512/1024 tiers — it'll look a little soft at the largest Launchpad/Finder preview sizes, but is fine for a desktop shortcut. This step can run any time after `$GAME_DIR` is populated (Step 6 onward) and before the final `lsregister -f` below, since that call is what makes Launch Services notice the new icon — if the apps were already registered without an icon, re-run `lsregister -f` plus `killall Dock; killall Finder` to bust the icon cache after adding it later.
 
 ```bash
-chmod +x "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher" "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
-plutil -lint "/Applications/UaRO Patcher.app/Contents/Info.plist" "/Applications/UaRO Settings.app/Contents/Info.plist" "/Applications/UaRO Game.app/Contents/Info.plist"
-zsh -n "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"
-zsh -n "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"
-zsh -n "/Applications/UaRO Game.app/Contents/MacOS/uaro-game"
-
-# Ad-hoc re-sign all three bundles -- a freshly-built, never-signed bundle usually still
-# launches fine locally (no quarantine attribute to trigger a strict Gatekeeper
-# check), but that's a latent gap, not a guarantee: any future edit to any
-# bundle's contents (this step, Step 2a's healing checks, or a later session)
-# should re-run this same codesign call afterward, not just the first build.
-codesign --force --deep --sign - "/Applications/UaRO Patcher.app"
-codesign --force --deep --sign - "/Applications/UaRO Settings.app"
-codesign --force --deep --sign - "/Applications/UaRO Game.app"
-
-# Backup copies inside the game folder, per the original design intent
-cp -R "/Applications/UaRO Patcher.app" "$GAME_DIR/UaRO Patcher.app"
-cp -R "/Applications/UaRO Settings.app" "$GAME_DIR/UaRO Settings.app"
-cp -R "/Applications/UaRO Game.app" "$GAME_DIR/UaRO Game.app"
-
+typeset -A EXE=("UaRO Patcher.app" "uaro-patcher" "UaRO Settings.app" "uaro-settings" "UaRO Game.app" "uaro-game")
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-"$LSREGISTER" -f "/Applications/UaRO Patcher.app"
-"$LSREGISTER" -f "/Applications/UaRO Settings.app"
-"$LSREGISTER" -f "/Applications/UaRO Game.app"
+
+for APP in "${APPS[@]}"; do
+  chmod +x "/Applications/$APP/Contents/MacOS/${EXE[$APP]}"
+  plutil -lint "/Applications/$APP/Contents/Info.plist"
+  zsh -n "/Applications/$APP/Contents/MacOS/${EXE[$APP]}"
+
+  # Ad-hoc re-sign -- a freshly-built, never-signed bundle usually still
+  # launches fine locally (no quarantine attribute to trigger a strict Gatekeeper
+  # check), but that's a latent gap, not a guarantee: any future edit to any
+  # bundle's contents (this step, Step 2a's healing checks, or a later session)
+  # should re-run this same codesign call afterward, not just the first build.
+  codesign --force --deep --sign - "/Applications/$APP"
+
+  # Backup copy inside the game folder, per the original design intent
+  cp -R "/Applications/$APP" "$GAME_DIR/$APP"
+
+  "$LSREGISTER" -f "/Applications/$APP"
+done
 ```
 
 **MANDATORY registration verification — never `mdls`/`mdfind`, Spotlight lags well behind actual registration and will falsely report nothing for a while:**
@@ -869,8 +910,8 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 **MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
 
 ```bash
-for APP in "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app"; do
-  codesign -dv "$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
+for APP in "${APPS[@]}"; do
+  codesign -dv "/Applications/$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
 done
 ```
 
@@ -882,9 +923,10 @@ A small convenience wrapper around three operations this file otherwise document
 
 **If anything couldn't be auto-fixed, `repair` doesn't just print `[WARN]` lines and stop there** — it collects them into a final numbered list, prints a ready-to-paste message pointing whoever's reading it at Step 11 (so the next step is "copy this to a Claude Code/Codex session," not "go figure out which section of SKILL.md applies"), and exits with status `1` (a clean run exits `0`) so the outcome is also detectable by anything scripting against `uaro-cli`, not only by a human reading the terminal output.
 
-**`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk**, same as the launcher scripts above — this script has no shell variables to fall back on once installed.
+**`<BOTTLE_NAME>` and `<GAME_DIR>` must be substituted with this machine's real resolved values before this file is written to disk**, same as the launcher scripts above — this script has no shell variables to fall back on once installed. The `cat > ... <<'SCRIPT'` wrapper below both shows the content and is what actually creates the file at `/opt/homebrew/bin/uaro-cli` — already on `PATH` since Step 1, and already where `whisky` itself lives, so no separate `PATH` edit or shell-profile change is needed. **Keep the heredoc delimiter quoted (`<<'SCRIPT'`)** — the script body has its own live `$BOTTLE_NAME`/`$problems`/`$i` etc. variables that must reach disk literally for `zsh` to evaluate later, not get expanded by *this* shell at write time:
 
 ```bash
+cat > /opt/homebrew/bin/uaro-cli <<'SCRIPT'
 #!/bin/zsh
 set -e
 
@@ -1045,13 +1087,6 @@ case "$1" in
     repair) cmd_repair ;;
     *)      usage ;;
 esac
-```
-
-Install it directly into Homebrew's `bin` — already on `PATH` since Step 1, and already where `whisky` itself lives, so no separate `PATH` edit or shell-profile change is needed:
-
-```bash
-cat > /opt/homebrew/bin/uaro-cli <<'SCRIPT'
-<paste the script above, with <BOTTLE_NAME>/<GAME_DIR> substituted>
 SCRIPT
 chmod +x /opt/homebrew/bin/uaro-cli
 ```
