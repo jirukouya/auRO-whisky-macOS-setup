@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.13.0
+version: 0.14.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -138,7 +138,8 @@ ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
 command -v whisky
 
 # Existing bottles, and does any of them already have wine64?
-whisky list 2>/dev/null
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+"$WHISKY" list 2>/dev/null
 
 # Existing uaRO install anywhere plausible — common host paths, plus inside every bottle's drive_c
 find ~/Games ~/Documents ~/Downloads ~/"Library/Application Support" -maxdepth 3 -iname "UaRO*" -type d 2>/dev/null
@@ -1294,7 +1295,8 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 > ```bash
 > ls ~/Games                              # confirm the real game folder name
 > GAME_DIR="$HOME/Games/UaRO World of Your Dream"   # the real path for this machine, not the default verbatim
-> whisky list                             # confirm the real bottle name
+> WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+> "$WHISKY" list                          # confirm the real bottle name
 > BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
 > ```
 
@@ -1330,8 +1332,9 @@ command -v uaro-cli && echo "still there" || echo "removed"
 test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer leftovers still there" || echo "installer leftovers removed"
 
 # --- Level 2: also drop the bottle ---
-"$(command -v whisky)" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
-whisky list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+"$WHISKY" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
+"$WHISKY" list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
 
 # --- Level 3: also remove Whisky.app + the WhiskyWine runtime ---
 rm -rf /Applications/Whisky.app ~/Applications/Whisky.app

@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-28
+
+### Fixed
+- Prompted by a sixth fresh, zero-context cold-read of the public repo, run against the actual current `main` (`a6ea8a7`, 0.13.0). One real finding survived: **four more bare `whisky` calls, uncounted by the 0.13.0 fix, including one inside the very fix that shipped that version:**
+  - **Section 2a's existing-bottle detection** (`whisky list 2>/dev/null`) — bare, so on a non-Homebrew Whisky install it silently reports nothing found (its own `2>/dev/null` swallows the error) instead of degrading to the fallback path.
+  - **The Uninstall section's own re-derivation TIP** (`whisky list # confirm the real bottle name`) — bare. Notable because this exact block was added *this same version* to fix a different bug (missing `$GAME_DIR`/`$BOTTLE_NAME` re-derivation), and reintroduced this one in the process.
+  - **Uninstall Level 2's bottle deletion** (`"$(command -v whisky)" delete "$BOTTLE_NAME"`) and the **verification line right after** (`whisky list | grep -q ...`) — the first had `command -v whisky` but no `|| echo .../WhiskyCmd` fallback; the second was fully bare. Worst-case site for this bug: Uninstall is documented as a standalone entry point with no earlier block that would already have resolved `$WHISKY`, so a non-brew install fails outright with "command not found" instead of deleting the bottle.
+  - Fixed all four the same way as 0.13.0: resolve `WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"` first, then call `"$WHISKY" ...`. Verified by actually running all three reconstructed blocks under `/bin/bash` with `whisky` removed from `PATH` — all three now resolve to the fallback path correctly.
+
 ## [0.13.0] - 2026-07-28
 
 ### Fixed
