@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.14.0
+version: 0.15.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -483,6 +483,8 @@ cp "$SETUP" "$SETUP.orig-backup"
 chmod u+w "$SETUP"
 ```
 
+**`$SETUP` is reused bare in both later code blocks below (the `dd`/Python patch and the mandatory byte-diff verification) — re-derive it (`SETUP="$GAME_DIR/setup.exe"`) at the top of each, the same standing rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` (see the callout after the Parameters table).** Since it's a deterministic one-liner from `$GAME_DIR`, not a decision that needs remembering, always re-deriving is a harmless no-op even when it happens to already be correct.
+
 **Site A — 1 byte @ `0x2C0CD`, `dc`→`d8`.** Context window is 4 bytes *before* the patched byte, the byte itself, then 3 bytes after (`dc442410 dc d0dfe0`, patched byte in the middle) — reading 8 bytes forward *starting at* the offset will not match and looks like a false "uncatalogued build."
 
 **Site B — 4 bytes @ `0x21E39`, `dcd8dfe0`→`ddd8b440`.** Context here *does* start exactly at the patch offset — the two sites use different alignment conventions, don't unify them.
@@ -490,6 +492,7 @@ chmod u+w "$SETUP"
 Preferred method — plain `dd` (fine for normal unrestricted shells):
 
 ```bash
+SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
 xxd -s $((0x2C0C9)) -l 8 "$SETUP"     # confirm context reads dc442410dcd0dfe0 before patching
 printf '\xd8' | dd of="$SETUP" bs=1 seek=$((0x2C0CD)) count=1 conv=notrunc
 
@@ -513,6 +516,7 @@ python3 /tmp/patch_setup_exe.py
 **MANDATORY verification — byte-diff against the backup, don't just trust the write succeeded:**
 
 ```bash
+SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
 cmp -l "$SETUP.orig-backup" "$SETUP" | awk '{printf "offset(dec)=%d 0x%X\n", $1-1, $1-1}'
 # Expect exactly: 0x2C0CD, and within 0x21E39-0x21E3C (3 of the 4 bytes actually differ — the
 # 2nd byte of Site B, 0xd8, is unchanged between pre/post). Nothing else should be listed.
@@ -536,8 +540,10 @@ brew install winetricks   # if not already present
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
 eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 env | grep -i '^WINE'     # confirm WINEPREFIX actually points at the right bottle before proceeding
-winetricks -q gecko
+caffeinate -i winetricks -q gecko
 ```
+
+**`caffeinate -i` wraps this for the same reason as Step 4's download and Step 7's install** — `winetricks -q gecko` downloads and silently installs a real (if small) payload, and neither `winetricks` nor Wine requests its own "stay awake" assertion. On a laptop that's idle-timeout-eligible, an unlucky sleep mid-download can leave Gecko partially installed with no clear error pointing at why. `caffeinate` holds the assertion only as long as `winetricks` is running.
 
 **Fallback, if winetricks isn't available or targets the wrong prefix — launch the patcher once on purpose and handle the prompt live:**
 
@@ -1265,7 +1271,7 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 | Runtime/Wine | `WhiskyWineVersion.plist` written as a plain string silently fails `isWhiskyWineInstalled()` | Whisky's Codable decode expects a structured `{major,minor,patch,preRelease,build}` dict, not a string | Use the exact structured plist in Step 4 |
 | Bottle/Config | `whisky list` prints a bottle path that doesn't exist | Cosmetic CLI display bug | Always use `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>` |
 | Install/Download | A just-extracted/downloaded file mysteriously vanishes and Wine reports `c0000135` | iCloud Drive silently relocated the folder out from under the running process — affects `~/Downloads` too, not just `~/Documents`/`~/Desktop` | Use a non-iCloud `GAME_DIR`/scratch dir (`~/Games/...`); always wait ~30s and recheck after any extraction there |
-| Install/Installer | Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Use `eval $(whisky shellenv <bottle>); wine64 setup.exe /DIR=Z:\...` directly |
+| Install/Installer | Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Use `WHISKY=$(command -v whisky \|\| echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd); eval "$("$WHISKY" shellenv <bottle>)"; wine64 setup.exe /DIR=Z:\...` directly |
 | Crash/Gameplay | Game crashes ~3s after login | Gepard CPU detection | `WINE_CPU_TOPOLOGY=4:0,1,2,3` in the launcher |
 | Crash/Gameplay | `Gepard::T Code: 3::110::12` | Native MSVC DLLs not loading | `WINEDLLOVERRIDES` must include `msvcp140,vcruntime140,concrt140,vccorlib140=n,b`, DLLs must sit next to the game exe |
 | Runtime/Wine | Low FPS / stutter | Launcher replaced `WINEDLLOVERRIDES` instead of appending | Use the `${VAR:+$VAR;}` append idiom, never overwrite |

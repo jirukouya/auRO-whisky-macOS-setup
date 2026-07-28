@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-28
+
+### Fixed
+- Prompted by a seventh fresh, zero-context cold-read of the public repo, run against the actual current `main` (`8c741b8`, 0.14.0). Three minor findings, none blocking on the main execution path:
+  - **The Common Gotchas table's "Inno Setup installs into the bottle" row (`Install/Installer`) had the one surviving bare, unquoted `whisky` call in the whole file** (`eval $(whisky shellenv <bottle>)`) — missed by every prior sweep because it lives in the reference table, not a numbered Step. Fixed to match the established pattern: `WHISKY=$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd); eval "$("$WHISKY" shellenv <bottle>)"`.
+  - **Step 9's primary Gecko install (`winetricks -q gecko`) wasn't wrapped in `caffeinate -i`**, unlike every other unattended multi-minute operation in this file (Step 4's WhiskyWine download, Step 7's installer run) — both of which explain why. Wrapped it the same way, with the same justification.
+  - **`$SETUP` (Step 8) was reused bare across two later, separately-fenced code blocks** (the `dd`/Python patch, and the mandatory byte-diff verification) with no inline re-derivation, unlike `$APPS`'s pattern in Step 11. Not a silent failure (missing `$SETUP` fails loudly via `cp`/`xxd`/`cmp` file-not-found), but inconsistent with the file's own standing re-derivation rule. Added `SETUP="$GAME_DIR/setup.exe"` at the top of both later blocks, plus a note after Step 8's opening block naming the rule explicitly. Verified all three Step 8 blocks — backup, patch, and verification — end to end as genuinely separate `/bin/bash` processes against a synthetic binary; the verification block's output matched the doc's own documented expected offsets exactly (`0x2C0CD`, `0x21E39`, `0x21E3B`, `0x21E3C`).
+
 ## [0.14.0] - 2026-07-28
 
 ### Fixed
