@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.15.0
+version: 0.16.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -405,7 +405,7 @@ mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
 if [[ "$INSTALLER_SOURCE" == ~/Games/UaRO_Setup.zip ]]; then
   : # already staged by 2b — nothing to do
 elif [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
-  curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
+  caffeinate -i curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
 else
   cp "$INSTALLER_SOURCE" ~/Games/UaRO_Setup.zip
 fi
@@ -414,6 +414,8 @@ ditto -xk ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # NEVER unzip — macOS's 
                                                        # silently no-ops on ZIP64 archives over 4GB
                                                        # (this installer is ~4.7GB): empty folder, no error.
 ```
+
+**`caffeinate -i` on the `curl` branch above, same reason as Step 4's download and Step 7's install** — this is the same ~4.7GB installer (per 2b's own size-window comment), fetched directly rather than staged via a browser, so it has no "stay awake" assertion of its own; an idle-timeout sleep mid-download would stall or corrupt it with no clear error pointing at why.
 
 **MANDATORY iCloud-safety check — do this even if the pre-flight iCloud probe came back negative:**
 
@@ -792,8 +794,15 @@ while [[ $attempt -le 2 ]]; do
     start=$(date +%s)
     wine64 "UaRo Patcher.exe" >/dev/null 2>&1 &
     pid=$!
+    # set +e/-e bracketing `wait` is load-bearing, not decoration: with `set -e` active
+    # (as at the top of this script), `wait $pid` on a non-zero exit triggers errexit
+    # itself -- the script would terminate right there, before `code=$?` ever runs, so
+    # the retry below silently never fires on the very first crash. Confirmed directly:
+    # `zsh -c 'set -e; false & wait $!; echo reached'` never prints "reached".
+    set +e
     wait $pid
     code=$?
+    set -e
     elapsed=$(( $(date +%s) - start ))
 
     # A clean user-initiated quit exits 0. The known false-positive crash gets

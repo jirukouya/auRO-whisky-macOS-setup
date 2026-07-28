@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-28
+
+### Fixed
+- Prompted by an eighth fresh, zero-context cold-read of the public repo, run against the actual current `main` (`f3e53dd`, 0.15.0):
+  - **`uaro-patcher`'s crash-retry loop (Step 11) never actually retried, because `set -e` + a bare `wait $pid` interact badly.** The script sets `set -e` at the top (needed elsewhere), then the retry loop does `wine64 "UaRo Patcher.exe" & pid=$!; wait $pid; code=$?`. With `errexit` active, `wait $pid` on a non-zero exit — exactly the known false-positive crash this loop exists to catch — triggers `errexit` itself: the script terminates right there, before `code=$?`, the `elapsed` calculation, or the retry `if` ever run. Confirmed directly: `zsh -c 'set -e; false & wait $!; echo reached'` never prints "reached". Because `ShowCrashDialog=0` is set unconditionally, separately, before the loop, this silent give-up looks externally identical to a successful retry (no popup, process gone cleanly) — which is almost certainly why the "Verified fix, not theoretical" field test in Step 11 didn't catch that the second `wine64` launch never actually happens. **Fixed by bracketing the `wait`/`code=$?` pair in `set +e`/`set -e`** so capturing a non-zero exit status doesn't itself trigger `errexit`. Verified end to end: extracted the actual script body from SKILL.md and ran it under real `/bin/zsh`, once simulating a crash-then-success (exits 0, confirming the retry actually fires) and once simulating both attempts crashing (exits with the crash code, confirming it still propagates correctly rather than being silently swallowed).
+  - **Step 6's URL-download branch (`curl -fL ... "$INSTALLER_SOURCE"`) had no `caffeinate -i`**, unlike Step 4's WhiskyWine download, Step 7's installer run, and Step 9's Gecko install — despite being the same ~4.7GB installer fetched directly rather than staged via a browser. Wrapped it the same way, with the same justification.
+
 ## [0.15.0] - 2026-07-28
 
 ### Fixed
