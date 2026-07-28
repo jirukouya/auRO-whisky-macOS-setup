@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.7.0
+version: 0.8.1
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -11,6 +11,8 @@ This file is meant to be handed to a fresh Claude Code (or Codex) session on a b
 This is not a rewrite from theory. It is the corrected, verified procedure after actually running the whole thing once on a real machine (Apple Silicon, macOS 26.5.2) and finding several real bugs in the "obvious" version of these steps. Every mandatory verification step below exists because skipping it once actually produced a silent failure during that run — they are not defensive-programming boilerplate.
 
 ## Table of contents
+
+**Two separate numbering schemes appear below, on purpose — don't conflate them:** `1. Parameters`/`2. Pre-flight`/`2a`/`2b` are one-time setup/detection sections that run *before* the linear install begins; `Step 1` through `Step 12` are the install sequence itself. `2. Pre-flight` and `Step 2` are unrelated despite the shared digit.
 
 **Setup (execute in order, once):**
 [0. Operating principles](#0-operating-principles--read-before-starting) ·
@@ -52,29 +54,32 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
 - **Angle-bracket placeholders (`<GAME_DIR>`, `<BOTTLE_NAME>`, `<UUID>`, `<CHOSEN_WIDTH>`, etc.) are not live shell variables — substitute the actual resolved value before writing them into anything that will execute standalone later** (the Python patch scripts, the three launcher `.app` scripts). This is different from an inline `$GAME_DIR` in a bash block meant to run immediately in this same shell. Code written to disk for later execution has no access to this session's variables — baking the literal text `<BOTTLE_NAME>` into a launcher script fails silently at write time and only breaks when the user actually double-clicks the app.
+- **A different risk, easy to conflate with the one above: `$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`, and other inline (non-placeholder) shell variables used directly in a bash block are not guaranteed to survive into a separately-run *later* block either.** Many agent tool-execution harnesses reset shell state between tool calls and only guarantee the working directory persists — a variable exported in one call is not reliably still set two calls later, even within the same Step. Prefer running each Step's full command sequence as one combined shell invocation so this never comes up. If your tooling forces a Step's commands across multiple separate calls anyway, re-derive/re-export the values a given block actually uses at the top of that block — don't assume something set several blocks ago is still there. See the callout right after the Parameters table below for the one-liners to re-derive the three most commonly reused ones (`$BOTTLE_NAME`, `$GAME_DIR`, `$WHISKY`); step-local variables (`$SETUP` in Step 8, `$META`/`$GUID` in Steps 5/10, `$SUPPORT` in Step 4, etc.) follow the same rule using that step's own definition line.
 - **Some steps may trigger a macOS admin/login password prompt (`sudo`) — expected, not a sign of a hijacked machine.** Homebrew's installer (Step 1) commonly needs it the first time it creates `/opt/homebrew`; Rosetta (Step 2) occasionally does too. Warn the user *before* running that command that a password prompt may appear. If the shell running these commands has no interactive terminal attached, the prompt can't be answered programmatically at all — it will hang or fail outright (`sudo: a password is required`) instead of actually showing a box to type into. If that happens, tell the user to open a normal Terminal window themselves and run that one command directly — only they should ever type their own Mac password, never ask them to tell it to you.
 
 ## 1a. Progress table (post this, updated, after every single step)
 
 Repost the **whole table**, not just the changed row, so the user always sees the full run at a glance:
 
+**Note on the two numbering schemes in this row column:** rows labeled bare `2a`/`2b` refer to the setup sections of those exact names (which run *before* `Step 1`, per the document's own top-to-bottom order); every other row is a `Step N` from the linear install sequence, labeled `Step N` here specifically so it can't be misread as the *different*, similarly-numbered `1. Parameters`/`2. Pre-flight` sections earlier in this file — those two aren't tracked in this table at all, since they're one-time decisions/checks, not steps with their own pass/fail state.
+
 | Step | What it does | Status | Notes |
 |---|---|---|---|
 | 2a | Detect existing state | ✅/❌/— | |
 | 2b | Kick off installer download | ✅/❌/— | |
-| 1 | Homebrew | ✅/❌/— | |
-| 2 | Rosetta 2 (Apple Silicon only) | ✅/❌/—/N/A | |
-| 3 | Whisky.app | ✅/❌/— | |
-| 4 | WhiskyWine runtime | ✅/❌/— | |
-| 5 | Bottle create/config | ✅/❌/— | |
-| 6 | Download & extract installer | ✅/❌/— | |
-| 7 | Run installer | ✅/❌/— | |
-| 8 | FCOM byte-patches | ✅/❌/— | |
-| 9 | Wine Gecko pre-install | ✅/❌/— | |
-| 9b | Fix game menu shortcuts (Option=Alt) | ✅/❌/— | |
-| 10 | Game config files | ✅/❌/— | |
-| 11 | Launcher `.app` bundles + icon | ✅/❌/— | |
-| 12 | First-run verification | ✅/❌/— | |
+| Step 1 | Homebrew | ✅/❌/— | |
+| Step 2 | Rosetta 2 (Apple Silicon only) | ✅/❌/—/N/A | |
+| Step 3 | Whisky.app | ✅/❌/— | |
+| Step 4 | WhiskyWine runtime | ✅/❌/— | |
+| Step 5 | Bottle create/config | ✅/❌/— | |
+| Step 6 | Download & extract installer | ✅/❌/— | |
+| Step 7 | Run installer | ✅/❌/— | |
+| Step 8 | FCOM byte-patches | ✅/❌/— | |
+| Step 9 | Wine Gecko pre-install | ✅/❌/— | |
+| Step 9b | Fix game menu shortcuts (Option=Alt) | ✅/❌/— | |
+| Step 10 | Game config files | ✅/❌/— | |
+| Step 11 | Launcher `.app` bundles + icon | ✅/❌/— | |
+| Step 12 | First-run verification | ✅/❌/— | |
 
 Rules for filling it in:
 - **✅** — state *how* it was verified (the actual command/output checked), not just "done". E.g. "`wine64 --version` → `wine-7.7`", not "installed".
@@ -91,6 +96,14 @@ Rules for filling it in:
 | `GAME_DIR` | `$HOME/Games/UaRO World of Your Dream` | Must NOT be under `~/Desktop`, `~/Documents`, or `~/Downloads` — see the iCloud gotcha below. `~/Games/<name>` or `~/Library/Application Support/<vendor>/<name>` are both confirmed-safe locations. |
 | `RESOLUTION` | closest available in RO OpenSetup's dropdown | Do not hardcode a pixel value — RO OpenSetup (`setup.exe`) offers a fixed list of scaled resolutions derived from the actual display's native resolution/scale factor. **Detect this machine's actual display first** (`system_profiler SPDisplaysDataType \| grep Resolution`), then offer that as the recommended default when asking the user, rather than asking with no context. Pick the closest same-aspect-ratio entry from the real dropdown once you get to Step 12 — different Macs have different native/scaled resolution lists, so the "right" answer genuinely varies by machine. |
 | `INSTALLER_SOURCE` | ask the user / check `~/Downloads` and common game folders, detected **by file size, not filename** (see 2b) | Could be a local `.zip` already downloaded, or a URL the user provides. Never guess/fabricate a download URL yourself. The installer itself sits behind a login wall (`https://uaro.net/cp/?module=account&action=login` — user-provided, not something you can fetch on their behalf), so this is always a human-driven download, never one you can script end-to-end. |
+
+> [!TIP]
+> **Re-derive these at the top of any code block that needs them, if it isn't the same shell invocation that first set them** (see Section 0's note on shell-state not persisting across separate tool calls):
+> ```bash
+> BOTTLE_NAME="uaro"                                              # or whatever was actually decided for this machine
+> GAME_DIR="$HOME/Games/UaRO World of Your Dream"                 # or whatever was actually decided for this machine
+> WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+> ```
 
 ## 2. Pre-flight
 
@@ -636,6 +649,8 @@ python3 -c "print(repr(open('$GAME_DIR/savedata/OptionInfo.lua','rb').read()))" 
 
 **Standing rule, not just for this initial build: any future fix that touches one launcher's script content (`uaro-patcher`, `uaro-settings`, or `uaro-game`) must be applied to all three where it's actually relevant**, unless the fix is genuinely specific to one (e.g. the crash-dialog mitigation and the patch-check both only apply to `uaro-patcher`, since only it runs the patcher). Whenever any of the three scripts is edited after this initial build — including by Step 2a's healing checks, or by any later session — **re-sign that bundle afterward** (see the `codesign` step below); an unsigned or stale-signed bundle after edits is the kind of thing that works today and silently breaks on a future macOS update.
 
+**Before building anything below — ask about `UaRO Game.app` specifically, every time this step runs (a fresh install, not just a Step 2a retrofit on an existing one).** It's the one launcher with an accepted, unresolved risk (see its own note further down, and *Known open issues*) — `UaRO Patcher.app`/`UaRO Settings.app` carry no such trade-off and don't need this checkpoint. Ask something like: *"There's an optional third launcher, `UaRO Game`, that skips the patcher for a faster relaunch — but it has no way to detect a stale/unpatched client if a patch ships while it's being used instead of the Patcher. Want me to build it along with the other two, or just Patcher + Settings for now?"* **If the user declines, omit `UaRO Game.app` from every list in this step below** — the `mkdir` loop, the `Info.plist` mirroring, its own script section, the icon-copy loop, and the `chmod`/`plutil`/`zsh -n`/`codesign`/backup-copy/`lsregister` commands and both verification loops — and build only `UaRO Patcher.app` and `UaRO Settings.app`. It can always be added later via Step 2a's own migration check, which asks this same question for existing installs.
+
 ```bash
 for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
   mkdir -p "/Applications/$APP/Contents/MacOS"
@@ -1092,7 +1107,7 @@ uaro-cli repair; echo "exit: $?"   # confirm back to "All checks passed." / exit
 This is the payoff moment after a long, mostly-invisible process — post it plainly, don't skip straight to a dry "done":
 
 > [!TIP]
-> **All 12 steps complete — uaRO is fully installed and configured on this Mac.**
+> **Setup complete — uaRO is fully installed and configured on this Mac.**
 > Enjoy the game 🎮
 
 Then walk the user through these four points, every time, regardless of how the install went:

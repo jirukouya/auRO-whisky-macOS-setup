@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-27
+
+### Fixed
+- Remaining cosmetic findings from the same cold-read pass as 0.8.0:
+  - `README.md`'s "Latest: v0.2.0" line was five versions stale. Replaced with a pointer to `CHANGELOG.md` + `SKILL.md`'s own frontmatter version instead of a second hardcoded version summary — removes the duplication that let it go stale in the first place, rather than just updating the number again.
+  - `README.md`'s Disclaimer still said "two apps in `/Applications`" from before `UaRO Game.app` and `uaro-cli` existed. Now says three apps, plus the optional `uaro-cli` helper in `/opt/homebrew/bin`.
+  - `SKILL.md`'s "Installation complete" banner said "All 12 steps complete," undercounting the progress table's actual 15 tracked rows (Steps 1–12 plus 2a/2b/9b). Reworded to "Setup complete" instead of hardcoding a count that can drift again as steps are added.
+
+## [0.8.0] - 2026-07-27
+
+### Fixed
+- Prompted by a fresh, zero-context cold-read of the public repo (a clean `git clone`, not a local read) done specifically to catch what a first-time executor with no prior context would actually trip on. Three findings addressed:
+  - **Cross-block shell-variable persistence.** Section 0 only warned about angle-bracket placeholders baked into files written to disk — it never covered the separate risk of inline `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY`/step-local variables (`$SETUP`, `$META`, `$GUID`, `$SUPPORT`, etc.) used directly in bash blocks, which many agent tool-execution harnesses do *not* keep set across separate tool calls (only cwd is guaranteed to persist). Added a new Section 0 principle plus a `[!TIP]` callout right after the Parameters table with copy-pasteable one-liners to re-derive the three most commonly reused values.
+  - **`UaRO Game.app` consent gap on fresh installs.** Step 2a already required explicit user consent before retrofitting `UaRO Game.app` onto an *existing* install, but Step 11's actual build script built all three launchers unconditionally on a fresh install, with no equivalent checkpoint. Added the same consent question to the top of Step 11 itself, with explicit instructions to omit `UaRO Game.app` from every list in that step if declined.
+  - **Colliding numbering schemes.** `1. Parameters`/`2. Pre-flight`/`2a`/`2b` (one-time setup/detection) and `Step 1`–`Step 12` (the install sequence) share overlapping bare digits — most visibly in the progress table, whose rows were labeled with bare `1`–`12` even though they mean `Step 1`–`Step 12`, not the similarly-numbered Parameters/Pre-flight sections. Relabeled those rows `Step N` explicitly, and added disambiguating notes at the Table of Contents and directly above the progress table.
+
 ## [0.7.0] - 2026-07-27
 
 ### Added
