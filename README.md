@@ -48,7 +48,7 @@ A command-line tool (`claude`, `codex`, or `copilot`) that you type into Mac's b
 1. **Open Terminal anywhere**, and use one of these:
    - [Claude Code](https://claude.com/claude-code) — `claude`
    - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex`
-   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot` (free tier with weekly credits). Install it with:
+   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot` (free tier, 50 premium requests/month). Install it with:
      ```
      curl -fsSL https://gh.io/copilot-install | bash
      ```
