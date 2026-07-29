@@ -38,7 +38,7 @@ A normal Mac app, like any other — you click around in a window, no typing com
 1. Download one of these and sign in:
    - [Claude](https://claude.com/download)
    - [ChatGPT](https://chatgpt.com/download)
-   - [GitHub Copilot](https://github.com/features/ai/github-app) — click **Download** on that page
+   - [GitHub Copilot](https://github.com/features/ai/github-app)
 2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or the **+** next to **Sessions** (GitHub Copilot). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
 3. Paste this whole thing into the chat box:
    ```
