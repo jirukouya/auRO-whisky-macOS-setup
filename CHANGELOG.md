@@ -9,6 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [0.16.1] - 2026-07-29
 
 ### Changed
+- `README.md`: Option A now lists per-app choices (Claude, ChatGPT, GitHub Copilot app) in the same layout as Option B, adding the [GitHub Copilot app](https://github.com/features/ai/github-app) (macOS desktop app, free tier included) as a third choice.
+  - Correction: Copilot CLI's "50 premium requests/month" figure (added earlier this same release, below) was stale — GitHub retired that billing model to legacy; current Free plan is "2,000 completions/month + limited chat/agent usage" per `docs.github.com/en/copilot/get-started/plans`, checked directly this time rather than reused from the earlier entry.
+  - Also notes ChatGPT/Codex does have a free tier (previously implied only Copilot did), but flags it as too limited for an install this long, same as Claude's.
 - Prompted by Discord feedback (uaRO player "Defectivve") on unclear prerequisites, Git/Xcode confusion, and a request for a gentler pace:
   - `README.md`: "How to actually run this" now offers two paths — desktop app (Claude's Code tab / ChatGPT's Codex tab, no Terminal) or Terminal/CLI — both noting a paid plan is required.
   - `README.md`: "Updating an existing install" now points back at either path above instead of assuming a session is already open.

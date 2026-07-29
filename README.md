@@ -30,13 +30,16 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT require a paid plan** (not the free tier — this install is long enough that a free plan can run out mid-way); **GitHub Copilot CLI has a free tier** that may cover it instead — see Option B.
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT have free tiers, but they're too limited for an install this long** (expect one to run out mid-way); **GitHub Copilot's free tier** (2,000 completions/month + limited chat/agent usage) is the one most likely to get you all the way through.
 
 **Option A — Desktop app (no Terminal needed):**
 A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal before.
 
-1. Download [Claude](https://claude.com/download) or [ChatGPT](https://chatgpt.com/download) for Mac and sign in.
-2. Click the **Code** tab (Claude) or **Codex** tab (ChatGPT), then start a new chat. It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
+1. Download one of these and sign in:
+   - [Claude](https://claude.com/download) — needs a paid plan for an install this long
+   - [ChatGPT](https://chatgpt.com/download) — has a free tier, but it's too limited for this
+   - [GitHub Copilot app](https://github.com/features/ai/github-app) — free tier (2,000 completions/month + limited chat/agent usage) most likely to cover it
+2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or start a new session (GitHub Copilot app). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
 3. Paste this whole thing into the chat box:
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
@@ -46,9 +49,9 @@ A normal Mac app, like any other — you click around in a window, no typing com
 A command-line tool (`claude`, `codex`, or `copilot`) that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
 1. **Open Terminal anywhere**, and use one of these:
-   - [Claude Code](https://claude.com/claude-code) — `claude`
-   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex`
-   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot` (free tier, 50 premium requests/month). Install it with:
+   - [Claude Code](https://claude.com/claude-code) — `claude` (needs a paid Claude plan for an install this long)
+   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex` (ChatGPT has a free tier, but it's too limited for this — a paid plan is safer)
+   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot` (free tier: 2,000 completions/month + limited chat/agent usage, no fixed cap published — most likely to cover this). Install it with:
      ```
      curl -fsSL https://gh.io/copilot-install | bash
      ```
