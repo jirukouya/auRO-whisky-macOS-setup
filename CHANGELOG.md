@@ -9,10 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [0.16.1] - 2026-07-29
 
 ### Changed
-- Prompted by Discord feedback (uaRO player "Defectivve"): before finishing a successful install, they said the hardest part was figuring out what Git and Xcode even were, and separately asked whether they needed Claude Code/Codex CLI or Whisky already installed before starting — both signs that README.md's "How to actually run this" assumed a reader who already knows what a CLI coding session is. Rewrote that section into two explicit paths: Option A (Claude's Code tab / ChatGPT's Codex tab in their desktop apps — no Terminal at all) and Option B (the existing Terminal/CLI flow), each with a one-line explanation of what it actually is, plus an upfront note that either path needs a paid plan (not the free tier) since a usage cap running out mid-install is a confusing way to get stuck.
-- Same Discord feedback, follow-on fix: `README.md`'s "Updating an existing install" section pointed at "your AI session" without saying how to open one — now explicitly points back at "either option above," so it stays correct now that there are two entry paths instead of one.
-- Same Discord feedback, addressing the actual root cause of Defectivve's "hardest part was Git and Xcode" comment: `SKILL.md` Step 1 (Homebrew) now warns that macOS's own "Install Command Line Developer Tools" dialog (triggered by `git`/`cc`, which Homebrew depends on) can pop up on a genuinely fresh Mac. Tells the AI to explain the popup in plain language before the user sees it unexplained, and gives an `xcode-select -p` check for confirming it actually finished if it was dismissed instead of installed.
-- Same Discord feedback, minor tone adjustment: Defectivve also mentioned needing to pause and read carefully at times (ADHD made this harder in the moment, though they got the install working). Section 1a's per-step approval prompt now reads "take your time, and let me know when you're ready" instead of "proceed to Step N+1?" — the wait-for-explicit-approval mechanism itself was already correct (SKILL.md never advances on silence or assumed approval), this just makes the prompt's language match that patience explicitly rather than reading as a nudge to hurry.
+- Prompted by Discord feedback (uaRO player "Defectivve") on unclear prerequisites, Git/Xcode confusion, and a request for a gentler pace:
+  - `README.md`: "How to actually run this" now offers two paths — desktop app (Claude's Code tab / ChatGPT's Codex tab, no Terminal) or Terminal/CLI — both noting a paid plan is required.
+  - `README.md`: "Updating an existing install" now points back at either path above instead of assuming a session is already open.
+  - `SKILL.md` Step 1: added a heads-up about macOS's own Command Line Developer Tools popup (git/Xcode), so it's explained before the user sees it, not after.
+  - `SKILL.md` 1a: per-step approval prompt reworded to "take your time, and let me know when you're ready" instead of "proceed to Step N+1?".
 
 ## [0.16.0] - 2026-07-28
 
