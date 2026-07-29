@@ -227,6 +227,8 @@ This exact value matches Step 6's *first* `if` branch (already staged, nothing t
 
 ## Step 1 — Homebrew
 
+**Before running this, give the user one line of why:** *"First up: Homebrew — the tool this whole setup runs through, including installing Whisky itself in a couple steps. Along the way, this will also install `git` and a small part of Xcode (just the Command Line Tools, not the full app) — that's normal plumbing this process needs, not something you need to know how to use."*
+
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
