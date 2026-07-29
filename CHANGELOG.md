@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-07-29
+
+### Changed
+- Prompted by Discord feedback (uaRO player "Defectivve"): before finishing a successful install, they said the hardest part was figuring out what Git and Xcode even were, and separately asked whether they needed Claude Code/Codex CLI or Whisky already installed before starting — both signs that README.md's "How to actually run this" assumed a reader who already knows what a CLI coding session is. Rewrote that section into two explicit paths: Option A (Claude's Code tab / ChatGPT's Codex tab in their desktop apps — no Terminal at all) and Option B (the existing Terminal/CLI flow), each with a one-line explanation of what it actually is, plus an upfront note that either path needs a paid plan (not the free tier) since a usage cap running out mid-install is a confusing way to get stuck. The Xcode Command Line Tools popup itself (triggered by Step 1's `brew install` regardless of which path a user takes) is a separate, not-yet-made change — still open on SKILL.md's side.
+
 ## [0.16.0] - 2026-07-28
 
 ### Fixed

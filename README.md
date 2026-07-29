@@ -30,13 +30,23 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-1. **Open Terminal anywhere**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Requires a paid subscription** (not the free tier — this install is long enough that a free plan can run out mid-way).
 
-2. **Paste this whole thing:**
+**Option A — Desktop app (no Terminal needed):**
+A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal before.
+
+1. Download [Claude](https://claude.com/download) or [ChatGPT](https://chatgpt.com/download) for Mac and sign in.
+2. Click the **Code** tab (Claude) or **Codex** tab (ChatGPT), pick any folder.
+3. Paste this whole thing into the chat box:
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
    ```
 
+**Option B — Terminal:**
+A command-line tool, `claude` or `codex`, that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
+
+1. **Open Terminal anywhere**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
+2. **Paste the same message as above.**
 3. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
 
 ## Updating an existing install
