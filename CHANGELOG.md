@@ -14,6 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   - `README.md`: "Updating an existing install" now points back at either path above instead of assuming a session is already open.
   - `SKILL.md` Step 1: added a heads-up about macOS's own Command Line Developer Tools popup (git/Xcode), so it's explained before the user sees it, not after.
   - `SKILL.md` 1a: per-step approval prompt reworded to "take your time, and let me know when you're ready" instead of "proceed to Step N+1?".
+  - `README.md`: Option B now shows the full paste-able command inline instead of "paste the same message as above" — "above" was ambiguous with two options on the page.
 
 ## [0.16.0] - 2026-07-28
 

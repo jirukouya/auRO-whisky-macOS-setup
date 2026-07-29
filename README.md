@@ -46,7 +46,10 @@ A normal Mac app, like any other — you click around in a window, no typing com
 A command-line tool, `claude` or `codex`, that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
 1. **Open Terminal anywhere**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
-2. **Paste the same message as above.**
+2. **Paste this whole thing:**
+   ```
+   Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
+   ```
 3. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
 
 ## Updating an existing install
