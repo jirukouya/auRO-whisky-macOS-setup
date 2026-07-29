@@ -237,6 +237,8 @@ brew --version   # verify
 
 **Tell the user before running this:** the installer may prompt for the Mac's admin/login password (it needs it the first time to create `/opt/homebrew`). That's expected — not a sign of anything wrong. If the command instead hangs or fails with something like `sudo: a password is required` rather than actually showing a password prompt, the current shell has no interactive terminal attached to answer it — ask the user to open a normal Terminal window and run the install command there directly.
 
+**A second, unrelated popup can also appear here: macOS's own "Install Command Line Developer Tools" dialog.** This comes from `git`/`cc`, which Homebrew depends on underneath — not from the command above directly — and it only shows up on a Mac that's never had any developer tools installed before, which is common on a genuinely fresh machine. It's expected, not a sign of anything wrong. Tell the user plainly, before they see it and wonder what "Xcode" or "Command Line Tools" even are: *"You might see a system popup asking to install Command Line Developer Tools — that's normal, it's a small Apple toolkit Homebrew needs (it includes `git`). Click Install and wait; it can take a few minutes. Let me know once it's done and we'll continue."* If the user dismisses it instead of installing, later `git`-dependent steps can fail in confusing ways rather than at this step — `xcode-select -p` (prints a path like `/Library/Developer/CommandLineTools` if present, errors if not) is the quick way to check whether it actually finished.
+
 ## Step 2 — Rosetta 2 (Apple Silicon only)
 
 ```bash

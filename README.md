@@ -51,7 +51,7 @@ A command-line tool, `claude` or `codex`, that you type into Mac's built-in Term
 
 ## Updating an existing install
 
-Already installed uaRO with this skill before? Paste this whole thing to your AI session:
+Already installed uaRO with this skill before? Open a session the same way as above (either option), then paste this whole thing:
 
 ```
 Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup — I already have uaRO installed, run Step 2a to check my existing install against the latest fixes, and apply anything that's missing.
