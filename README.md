@@ -2,7 +2,7 @@
 
 **This repo is one file that installs the uaRO Windows game on your Mac by talking to an AI, not by reading instructions yourself.**
 
-[`SKILL.md`](./SKILL.md) is a self-contained playbook written *for an AI coding agent* (Claude Code or OpenAI Codex) to read and execute, not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing end to end. Curious what that actually involves? Open `SKILL.md` — it's all in there.
+[`SKILL.md`](./SKILL.md) is a self-contained playbook written *for an AI coding agent* (Claude Code, OpenAI Codex, or GitHub Copilot) to read and execute, not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing end to end. Curious what that actually involves? Open `SKILL.md` — it's all in there.
 
 ## The problem this solves
 
@@ -30,16 +30,16 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT have free tiers, but too limited for an install this long**; **GitHub Copilot's free tier** is the one most likely to cover it.
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT have free tiers, but too limited for an install this long**; **GitHub Copilot's free tier** is the one most likely to cover it. If a free tier does run out partway through, just open a session with a different tool and paste the same prompt again — it checks the actual state of your Mac, not your chat history, so it'll pick up wherever you left off (see "Updating an existing install" below).
 
 **Option A — Desktop app (no Terminal needed):**
-A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal before.
+A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal (the black command-line window under Applications → Utilities) before.
 
 1. Download one of these and sign in:
    - [Claude](https://claude.com/download) — needs a paid plan for an install this long
    - [ChatGPT](https://chatgpt.com/download) — free tier too limited for this
-   - [GitHub Copilot](https://github.com/features/ai/github-app) — free tier most likely to cover it
-2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or start a new session (GitHub Copilot). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
+   - [GitHub Copilot](https://github.com/features/ai/github-app) — click **Download** on that page; free tier most likely to cover it
+2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or the **+** next to **Sessions** (GitHub Copilot). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
 3. Paste this whole thing into the chat box:
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
