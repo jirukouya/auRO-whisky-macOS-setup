@@ -48,7 +48,11 @@ A normal Mac app, like any other — you click around in a window, no typing com
 **Option B — Terminal:**
 A command-line tool (`claude`, `codex`, or `copilot`) that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
-1. **Open Terminal anywhere**, and use one of these:
+1. **Open Terminal:**
+   - Press **⌘ Cmd + Space**, type `Terminal`, then press **Return** — or
+   - Open **Finder → Applications → Utilities → Terminal**.
+
+   Then use one of these:
    - [Claude Code](https://claude.com/claude-code) — `claude`. Install it with:
      ```
      curl -fsSL https://claude.ai/install.sh | bash
