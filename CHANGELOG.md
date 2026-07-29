@@ -17,6 +17,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   - `README.md`: Option B now shows the full paste-able command inline instead of "paste the same message as above" — "above" was ambiguous with two options on the page.
   - `README.md`: Option A's "pick any folder" (unexplained, per a cold-read agent flagging it as a genuine stumble) now gives a concrete default — pick Documents — and corrects the actual click order (Code/Codex tab first, *then* new chat, which is what triggers the folder picker) after checking both desktop apps directly.
   - `SKILL.md` Step 1: added an upfront one-line "why" before the install command — Homebrew is what installs Whisky itself later, and git/Xcode Command Line Tools come along as plumbing — instead of only explaining the popup reactively once it appears.
+- Prompted by Discord feedback ("Rhya"): `README.md` Option B now also lists [GitHub Copilot CLI](https://github.com/features/copilot/cli) (`copilot`) alongside Claude Code and Codex CLI — it has a free tier with weekly credits, so it doesn't require the paid plan the other two do. The top-level paid-plan note now scopes to Claude/ChatGPT specifically instead of implying all three need payment.
 
 ## [0.16.0] - 2026-07-28
 

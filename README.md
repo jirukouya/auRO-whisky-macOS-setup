@@ -30,7 +30,7 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Requires a paid subscription** (not the free tier — this install is long enough that a free plan can run out mid-way).
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT require a paid plan** (not the free tier — this install is long enough that a free plan can run out mid-way); **GitHub Copilot CLI has a free tier** that may cover it instead — see Option B.
 
 **Option A — Desktop app (no Terminal needed):**
 A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal before.
@@ -45,7 +45,7 @@ A normal Mac app, like any other — you click around in a window, no typing com
 **Option B — Terminal:**
 A command-line tool, `claude` or `codex`, that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
-1. **Open Terminal anywhere**, and start an AI coding session there — either [Claude Code](https://claude.com/claude-code) (`claude`) or [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`).
+1. **Open Terminal anywhere**, and start an AI coding session there — [Claude Code](https://claude.com/claude-code) (`claude`), [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`), or [GitHub Copilot CLI](https://github.com/features/copilot/cli) (`copilot` — has a free tier with weekly credits, so you may not need to pay).
 2. **Paste this whole thing:**
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
