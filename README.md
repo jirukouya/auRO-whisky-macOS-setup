@@ -30,15 +30,15 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude and ChatGPT have free tiers, but too limited for an install this long**; **GitHub Copilot's free tier** is the one most likely to cover it. If a free tier does run out partway through, just open a session with a different tool and paste the same prompt again — it checks the actual state of your Mac, not your chat history, so it'll pick up wherever you left off (see "Updating an existing install" below).
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude, ChatGPT, and GitHub Copilot can all complete this install** — pick whichever one you already have.
 
 **Option A — Desktop app (no Terminal needed):**
 A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal (the black command-line window under Applications → Utilities) before.
 
 1. Download one of these and sign in:
-   - [Claude](https://claude.com/download) — needs a paid plan for an install this long
-   - [ChatGPT](https://chatgpt.com/download) — free tier too limited for this
-   - [GitHub Copilot](https://github.com/features/ai/github-app) — click **Download** on that page; free tier most likely to cover it
+   - [Claude](https://claude.com/download)
+   - [ChatGPT](https://chatgpt.com/download)
+   - [GitHub Copilot](https://github.com/features/ai/github-app) — click **Download** on that page
 2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or the **+** next to **Sessions** (GitHub Copilot). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
 3. Paste this whole thing into the chat box:
    ```
@@ -49,9 +49,9 @@ A normal Mac app, like any other — you click around in a window, no typing com
 A command-line tool (`claude`, `codex`, or `copilot`) that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
 1. **Open Terminal anywhere**, and use one of these:
-   - [Claude Code](https://claude.com/claude-code) — `claude` — needs a paid plan for an install this long
-   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex` — free tier too limited for this
-   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot` — free tier most likely to cover it. Install it with:
+   - [Claude Code](https://claude.com/claude-code) — `claude`
+   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex`
+   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot`. Install it with:
      ```
      curl -fsSL https://gh.io/copilot-install | bash
      ```
