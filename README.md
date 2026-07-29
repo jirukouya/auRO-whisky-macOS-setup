@@ -30,7 +30,7 @@ None of it mattered, because the actual blocker was never performance — it was
 
 ## How to actually run this
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude, ChatGPT, and GitHub Copilot can all complete this install** — pick whichever one you already have.
+You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude, ChatGPT, and GitHub Copilot can all complete this install** — pick whichever one you already have. No preference? Start with **ChatGPT**.
 
 **Option A — Desktop app (no Terminal needed):**
 A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal (the black command-line window under Applications → Utilities) before.
