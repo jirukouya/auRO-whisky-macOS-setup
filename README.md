@@ -36,7 +36,7 @@ You'll drive this by talking to an AI — through its desktop app, or its comman
 A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal before.
 
 1. Download [Claude](https://claude.com/download) or [ChatGPT](https://chatgpt.com/download) for Mac and sign in.
-2. Click the **Code** tab (Claude) or **Codex** tab (ChatGPT), pick any folder.
+2. Start a new chat, then click the **Code** tab (Claude) or **Codex** tab (ChatGPT). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
 3. Paste this whole thing into the chat box:
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
