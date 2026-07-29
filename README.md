@@ -45,7 +45,7 @@ A normal Mac app, like any other — you click around in a window, no typing com
 **Option B — Terminal:**
 A command-line tool, `claude` or `codex`, that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
 
-1. **Open Terminal anywhere**, and start an AI coding session there — [Claude Code](https://claude.com/claude-code) (`claude`), [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`), or [GitHub Copilot CLI](https://github.com/features/copilot/cli) (`copilot` — has a free tier with weekly credits, so you may not need to pay).
+1. **Open Terminal anywhere**, and start an AI coding session there — [Claude Code](https://claude.com/claude-code) (`claude`), [OpenAI Codex CLI](https://github.com/openai/codex) (`codex`), or [GitHub Copilot CLI](https://github.com/features/copilot/cli) (`copilot` — install via `curl -fsSL https://gh.io/copilot-install | bash`, no Homebrew/Node needed; free tier with weekly credits, so you may not need to pay).
 2. **Paste this whole thing:**
    ```
    Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
