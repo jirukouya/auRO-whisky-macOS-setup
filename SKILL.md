@@ -86,7 +86,7 @@ Rules for filling it in:
 - **❌** — never leave this bare. The Notes cell must give exactly ONE recommended next action, chosen for *this* machine's actual detected environment (chip from `uname -m`, macOS version from `sw_vers`, what Pre-flight found already installed, what the real error text said) — not a generic list of possible causes. If genuinely unsure, say so plainly and propose the one action that would disambiguate it, rather than guessing.
 - **—** — not attempted yet this run. Don't mark a step ❌ preemptively just because it's later in the sequence.
 - **N/A** — doesn't apply to this machine (e.g. Step 2 on Intel Macs).
-- After posting the table, stop and ask explicitly, e.g. *"Step N looks good — proceed to Step N+1?"* (or, on a ❌ row, *"Want me to apply the fix above before continuing?"*). Wait for the user's actual reply. Do not treat silence, a prior unrelated "yes," or your own confidence that it'll work as approval.
+- After posting the table, stop and ask explicitly, e.g. *"Step N looks good — take your time, and let me know when you're ready for Step N+1."* (or, on a ❌ row, *"Want me to apply the fix above before continuing?"*). Wait for the user's actual reply. Do not treat silence, a prior unrelated "yes," or your own confidence that it'll work as approval.
 
 ## 1. Parameters (decide these fresh, every machine)
 
