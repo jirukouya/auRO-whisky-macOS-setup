@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-30
+
+### Fixed
+- Prompted by Discord feedback ("Rhya") from a real fresh install run, three steps ran their install/download commands unconditionally instead of checking first whether the target state already existed — Section `2a`'s "skip if already present" logic was only advisory prose, never enforced structurally inside the step itself:
+  - **Step 3 (Whisky.app):** `brew install --cask whisky` ran even when Whisky was already installed outside Homebrew's bookkeeping, throwing AppleEvents "not permitted" errors while brew tried to reconcile the existing `.app` — noisy for what should have been a no-op. Added an explicit existence check before the install attempt; skips straight to locating the CLI if found.
+  - **Step 4 (WhiskyWine runtime):** same pattern — no check for an already-working runtime before re-downloading. Added a pre-check (plist decodes + `wine64 --version` succeeds) that skips the whole download if already in place. Separately, the archive.org snapshot used as this step's fallback source was confirmed hanging/unreachable on three consecutive live attempts (not just an occasional 504) — reordered so this repo's own backup release (verified reachable, `200`) is tried first, with archive.org demoted to a last-resort fallback and given an explicit `--max-time` so a dead endpoint fails fast instead of hanging.
+  - **Step 9 (Wine Gecko):** no check for Gecko already present in a bottle carried over from a prior attempt, and the step's own wording assumed a dialog always appears — so `winetricks -q gecko` silently no-opping on an already-installed bottle read as ambiguous/failure rather than the expected success case. Added a `winetricks.log` check before running the installer, and stated explicitly that a quiet, dialog-free run is the expected outcome when Gecko's already there.
+- Added a general operating principle (Section 0): check real on-disk/registered end-state before running any install or download command, rather than firing it unconditionally and parsing errors after the fact — the same root cause behind all three fixes above.
+
 ## [0.16.1] - 2026-07-29
 
 ### Changed

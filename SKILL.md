@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.16.1
+version: 0.17.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -47,6 +47,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 
 - **Before answering any "what have we already tried/decided/fixed for this project" question — especially a comparative one, or one about a symptom that might already be a documented issue — read this repo's root `CLAUDE.md` first, then check every source it points to** (commit messages, `CHANGELOG.md`, this file's Known open issues/Common Gotchas, and `git notes` — see `CLAUDE.md` for why notes need an explicit `git fetch` to even become visible). Don't answer from whichever one source happens to come to mind first; a past run of this exact skill answered a historical-comparison question from `git log` alone and missed that `CHANGELOG.md` had the closer answer. This applies to *any* agent executing this file, not just one with prior conversation context — that's the whole reason it's written here instead of only remembered.
 - **Probe, don't assume, especially about what's "dead."** The premise "the Homebrew cask is disabled" turned out to be false on one real machine tested — it installed and worked fine. Try the normal path first every time; only fall back to a workaround if the normal path genuinely fails on *this* machine, right now.
+- **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an unconditional `brew install --cask whisky` threw noisy "not permitted" errors against an already-installed app, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
 - **A syntax-valid file is not a working file.** `plutil -lint` only checks that a plist parses as XML — it says nothing about whether the app that reads it can decode it into the shape it expects. Decode-test configs, don't just lint them.
 - **A file existing right after you wrote it is not proof it will still be there in 30 seconds.** On a Mac with iCloud Drive "Desktop & Documents" sync enabled, files written under `~/Documents` *and* `~/Downloads` can be silently relocated into `~/Library/Mobile Documents/com~apple~CloudDocs/...` asynchronously, tens of seconds after creation — long after an immediate check would have reported "fine."
 - **After any binary patch, byte-diff against a backup.** Don't trust that a patch did only what you intended — prove it with `cmp -l`.
@@ -254,7 +255,16 @@ This can also prompt for the Mac's admin/login password on some machines — sam
 
 ## Step 3 — Whisky.app
 
-Try Homebrew first — **do not skip this attempt on the assumption the cask is disabled.** Verify the result yourself rather than trusting the exit code alone, since a disabled/no-op cask can still exit 0 while installing nothing.
+**Check first — don't install unconditionally.** `2a` may already have flagged Whisky as present, but treat this as the actual gate rather than something to remember from a few steps back — running `brew install --cask whisky` against an already-installed, non-Homebrew-managed `Whisky.app` throws AppleEvents "not permitted" errors while brew tries to reconcile it, a noisy failure for what should be a no-op:
+
+```bash
+ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
+command -v whisky
+```
+
+If either printed something, Whisky's already installed — skip straight to "Locate the CLI" below, don't run the install commands.
+
+If nothing printed, try Homebrew — **do not skip this attempt on the assumption the cask is disabled.** Verify the result yourself rather than trusting the exit code alone, since a disabled/no-op cask can still exit 0 while installing nothing.
 
 ```bash
 brew install --cask whisky
@@ -290,22 +300,31 @@ WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/
 
 ## Step 4 — WhiskyWine runtime (Wine 7.x + Apple GPTK + DXVK)
 
-Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404). Fetch the Internet Archive snapshot instead — never rely on Whisky's own "Install GPTK" button, it shows a fake instant success and leaves an empty folder.
+**Check first — don't re-download onto a runtime that's already working.** A previous run, or a bottle/runtime carried over from an earlier attempt, may already have this in place:
 
 ```bash
 SUPPORT="$HOME/Library/Application Support/com.isaacmarovitz.Whisky"
+plutil -extract version.major xml1 -o - "$SUPPORT/Libraries/WhiskyWineVersion.plist" 2>/dev/null \
+  && "$SUPPORT/Libraries/Wine/bin/wine64" --version 2>/dev/null
+```
+
+If that printed both a version number and something like `wine-7.7`, the runtime's already installed and working — skip straight to Step 5, don't re-download.
+
+If either came back empty, fetch it. Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404) — never rely on Whisky's own "Install GPTK" button either, it shows a fake instant success and leaves an empty folder. The Internet Archive snapshot once documented here as the fallback is now unreliable itself — three consecutive live attempts hung/failed to connect rather than returning even an error — so **go straight to this repo's own archived copy** (byte-identical, confirmed reachable, no auth needed since this repo is public):
+
+```bash
 mkdir -p ~/Downloads   # transient scratch only — the .zip itself isn't at risk the way an extracted app bundle is, but move fast
-caffeinate -i curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
-  "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
+caffeinate -i curl -fL --progress-bar --max-time 300 -o ~/Downloads/WhiskyWine-Libraries.zip \
+  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
 ```
 
 **`caffeinate -i` wraps this download** — unlike a browser download (which requests its own "stay awake" assertion automatically), a `curl` call run this way has no such protection. On a laptop that's idle-timeout-eligible, this download can take a few minutes; without `caffeinate`, the Mac going to sleep partway through would stall or corrupt it, and it isn't obvious to a user why. `caffeinate` here just holds the system awake for exactly as long as `curl` is running, then releases automatically.
 
-**If that archive.org snapshot itself becomes unreachable** (a single pinned snapshot URL is a real single point of failure, not a hypothetical — Internet Archive outages/URL changes do happen): fall back to this repo's own archived copy, byte-identical to the file above. This repo is public, so plain `curl` works with no auth needed:
+**If this repo's own release is ever unreachable too** (GitHub outage, etc.), the Internet Archive snapshot is a last-resort second fallback — same URL as before this version, now with a short timeout so a dead endpoint fails fast instead of hanging:
 
 ```bash
-caffeinate -i curl -fL --progress-bar -o ~/Downloads/WhiskyWine-Libraries.zip \
-  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
+caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Libraries.zip \
+  "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
 
 Either way, continue identically from here:
@@ -539,6 +558,16 @@ Do this right after Step 8, before the patcher is run for the first time. **This
 
 There's a second, more important reason to do this ahead of time: the native "Wine Gecko Installer" dialog (source: `dl.winehq.org` — legitimate and currently working, unrelated to the dead `data.getwhisky.app` endpoint used elsewhere in this process) appears to show only **once**. Clicking **Cancel** instead of **Install** seems to make Wine remember that decision and never show the prompt again — leaving the patcher permanently stuck with no further recovery path short of manually re-triggering a Gecko install. Pre-installing removes this one-way door entirely.
 
+**Check first — don't assume this bottle needs it.** A bottle carried over from a previous install or attempt may already have Gecko installed:
+
+```bash
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
+grep -qi '^gecko' "$WINEPREFIX/winetricks.log" 2>/dev/null && echo "Gecko already installed in this bottle"
+```
+
+If that printed the "already installed" line, skip straight to the MANDATORY verification below — don't re-run `winetricks -q gecko`. And either way, once you do run it: **a quiet `winetricks -q gecko` that prints nothing unusual and shows no dialog is the *expected* result when Gecko's already present, not a sign anything went wrong** — winetricks no-ops silently in that case. Don't read silence as failure, and don't confuse it with the separate, already-known post-Gecko patcher crash (see the note right after the verification step below).
+
 **Primary method — non-interactive:**
 
 ```bash
@@ -568,7 +597,7 @@ When the "Wine Gecko Installer" dialog appears, **click Install** and wait for i
 
 **MANDATORY verification, either path:** relaunch the patcher and confirm the status line advances past "Getting patch_main.txt..." and the panel actually renders/starts downloading. A blank panel still stuck on that line after a "successful" Gecko install means this step did not actually succeed — redo it before continuing.
 
-If the patcher then crashes right after Gecko finishes with a `Program Error` dialog, that's a separate, already-known open issue (see below) — Gecko itself installed correctly at that point; don't re-attempt this step because of that crash.
+**If the patcher instead crashes with a `Program Error` dialog right after Gecko finishes, that is a separate, already-known, unresolved open issue (see Known open issues below) — not evidence this step failed.** Gecko itself installed correctly if you get this far; don't re-run this step or second-guess the install because of that crash.
 
 ## Step 9b — Fix in-game menu shortcuts (Cmd+A/Cmd+Z-style) not registering
 
