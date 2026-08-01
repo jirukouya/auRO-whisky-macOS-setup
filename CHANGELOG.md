@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-01
+
+### Fixed
+- Found during the first full live run of this skill by an external user (fresh Apple Silicon Mac, macOS 26.5.2), at Step 12's first-run verification — not by a cold-read:
+  - **`uaro-settings` (Step 11) silently did nothing when double-clicked whenever `setup.exe` was already FCOM-patched — which is the normal healthy state after Step 8.** Under `set -e`, `_patch_setup_exe`'s final `[[ "$b_cur" == "dcd8dfe0" ]] && ...` Site-B check returns 1 when the file is already patched; that becomes the function's exit status, and `errexit` kills the script before the `exec wine64 "setup.exe"` line ever runs. This is the same `set -e` failure class as `uaro-patcher`'s `wait` bug fixed in 0.16.0 — that sweep verified the patcher script end to end but didn't re-audit the settings script for siblings. The bug never fires while `setup.exe` still *needs* patching (the `dd` runs and returns 0), which is why the original field test — run right after a fresh unpatched state — missed it. Reproduced in isolation (`zsh -c 'set -e; f() { [[ a == b ]] && echo x; }; f; echo reached'` never prints "reached"), then confirmed live: adding `return 0` as `_patch_setup_exe`'s last line fixed the launcher immediately on the affected machine. `uaro-patcher` and `uaro-game` are confirmed unaffected (they define no shell functions at all).
+  - Step 2a gained a healing check for it (`grep -q 'return 0'` against the installed `uaro-settings`), and the Common Gotchas table a `Launcher/Signing` row, so pre-0.18.0 installs get offered the fix without waiting for the symptom to be reported.
+
+### Added
+- **F1-F12 skill-key guidance** (new walkthrough item 9 in *Installation complete*, plus an `Input/Keyboard` gotcha row), from the same live run: RO leans on the F-row, but Mac keyboards default it to brightness/volume/media. Apple keyboards: the System Settings *"Use F1, F2, etc. keys as standard function keys"* toggle, or per-app via the optional [Fluor](https://github.com/Pyroh/Fluor) menu-bar app (`brew install --cask fluor`) — with two live-verified wrinkles: Fluor rules must be created *while the game is running and frontmost* (the frontmost app presents as the launcher's own bundle name, `UaRO Game`/`UaRO Patcher`, not a Wine process name), and one live test on macOS 26.5.2 saw a Fluor rule never engage (`fnState` never flipped), so the gotcha row includes a `defaults read -g com.apple.keyboard.fnState` verification probe. Third-party keyboards (Keychron etc.) decide F-row behavior in their own firmware — neither the macOS toggle nor Fluor can affect them; documented the keyboard-side fixes instead (Keychron `fn+X+L` held ~4s in Mac mode, or the Mac/Windows hardware switch — the latter verified live as working, with the Cmd/Option swap trade-off noted).
+
 ## [0.17.0] - 2026-07-30
 
 ### Fixed
