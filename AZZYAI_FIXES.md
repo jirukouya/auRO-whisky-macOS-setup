@@ -16,7 +16,7 @@ AzzyAI installs, `/merai` (or `/hoai`) confirms the switch in chat, the mercenar
 |---|---|---|---|
 | 1 | `AI/USER_AI/Const_.lua` | Version string is `"1.552"`; AzzyAI's own version-check regex truncates it to `"1.55"` and logs a false "wrong version" / "ranged pierce exploit" warning in `AAIStartM.txt`/`AAIStartH.txt` | **No fix needed** — cosmetic false positive, doesn't gate any AI logic. Safe to ignore. |
 | 2 | `AI/USER_AI/M_Config.lua` (`H_Config.lua` for homunculus) | `StickyStandby=1` is AzzyAI's own stock default: the moment the mercenary enters its "follow" state (i.e. most of the time), it's silently forced into non-aggressive standby | Set `StickyStandby = 0` |
-| 3 | `AI/USER_AI/M_Config.lua` (`H_Config.lua`) | `AutoDetectPlant=1` is also AzzyAI's stock default: the first time it sees a monster standing still, it's treated as a possible passive "plant"-type monster and excluded from targeting until it moves on its own | Set `AutoDetectPlant = 0` (unless you actually want plant-avoidance) |
+| 3 | `AI/USER_AI/M_Config.lua` (`H_Config.lua`) | `AutoDetectPlant=1` is also AzzyAI's stock default: the first time it sees a monster standing still, it's treated as a possible passive "plant"-type monster and excluded from targeting until it moves on its own | Set `AutoDetectPlant = 0` while diagnosing #4/#5 below — with those still broken, this setting alone can make it look like *everything* is a plant. Once #4/#5 are fixed, this becomes a genuine preference (see "Ignoring stationary/plant monsters" near the end) rather than something that needs to be off. |
 | 4 | `AI/USER_AI/AI_main.lua`, ~line 3345 | `if (v > MagicNumber2) then Players[v]=1` classifies any actor ID above 100,000 as a player. **uaRO's monster GIDs are also above 100,000** (observed range: ~110,148,xxx), so every monster gets misclassified as a player and never enters the `Targets[]` table | `if (v > MagicNumber2 and IsMonster(v)==0) then` |
 | 5 | `AI/USER_AI/AzzyUtil.lua`, `IsPlayer()` (~line 321) | Same 100,000-ID threshold, in a second, independent function. `GetTact()` calls `IsPlayer()` directly and returns "no tactic" (0 = don't attack) for anything it flags as a player — so even if #4 is fixed and a monster makes it into `Targets[]`, this is what actually kills the attack decision | `if (id>MagicNumber2 and IsMonster(id)==0) then` |
 
@@ -85,6 +85,29 @@ Steps:
 4. Turn the log back off afterward (`--LogEnable["AAI_ACTORS"]=1`) — it writes a line for every newly-seen actor and there's no reason to keep it running once confirmed.
 
 If you need to go one layer deeper (confirm whether the mercenary/homunculus is actually deciding to engage, not just seeing the target), add a temporary probe right after the `aggro`/`GetEnemyList()` call in `AI_main.lua`'s `OnIDLE_ST()` (search for `SelectEnemy(GetEnemyList(MyID,aggro))`) logging `aggro`, `HPPercent(MyID)`, `ShouldStandby`, `StickyStandby`, and the returned enemy-list count under a custom `LogEnable[...]` channel. This is what isolated cause #5 after #2-#4 were already fixed and the mercenary was still idle.
+
+## Ignoring specific monsters by species (e.g. an MVP)
+
+AzzyAI has a real feature for this — a per-species tactics entry:
+```lua
+MyTact[classID]={TACT_IGNORE,SKILL_ALWAYS,KITE_NEVER,CAST_REACT,PUSH_SELF,DEBUFF_NEVER,CLASS_BOTH,RESCUE_OWNER,-1,SNIPE_OK,KS_NEVER,1,CHASE_NORMAL} --whatever monster this is
+```
+added to `M_Tactics.lua`/`H_Tactics.lua`, where `classID` is the monster's species/database ID (not its per-spawn actor GID, which changes every time it respawns).
+
+**This does not work on a mercenary without a homunculus running alongside it, and there is no way around that.** `GetTact()` needs to resolve an actor's species before it can look up its `MyTact[classID]` entry — and the *only* engine call in this whole codebase that can do that is `GetV(V_HOMUNTYPE, v)`. Confirmed live: calling it from a mercenary's own AI context (`IsHomun(MyID)==0`) throws a hard Lua error (`bad argument #1 to 'tostring' (value expected)`) — it returns literally nothing, not even `nil`, for anyone other than a homunculus. The full constant list this codebase references (`V_ATTACKRANGE`, `V_HOMUNTYPE`, `V_HP`, `V_MAXHP`, `V_MAXSP`, `V_MERTYPE`, `V_MOTION`, `V_OWNER`, `V_POSITION`, `V_POSITION_APPLY_SKILLATTACKRANGE`, `V_SKILLATTACKRANGE`, `V_SKILLATTACKRANGE_LEVEL`, `V_SP`, `V_TARGET`) has no substitute. A mercenary without a homunculus spotter falls back to `GetClass()`, which only ever returns one of three generic buckets (`0` normal / `10` summoned / `11` plant) — never an actual species ID — so a `MyTact[classID]` entry just sits there unused.
+
+The supported way to get real species data to a mercenary is `LiveMobID`: set `LiveMobID = 1` in **both** `H_Config.lua` and `M_Config.lua`, and keep an actual homunculus summoned near the mercenary. The homunculus writes `AI/USER_AI/MobID.lua` every tick with GID→species mappings for everything it can see (`GetV(V_HOMUNTYPE,v)` works fine there — the restriction is specifically about who's asking, not who's being asked about); the mercenary reloads that file every tick to populate its own lookup. Without a homunculus-capable class (Alchemist/Genetic-line), this path isn't available — the "AzzyAI Improved Data Gathering" AI the documentation also mentions as an alternative isn't bundled in this repo's AzzyAI release and hasn't been verified here.
+
+### Practical fallback for mercenary-only setups: ignoring stationary/plant monsters
+
+If per-species targeting isn't available, `AutoDetectPlant=1` is a usable (if approximate) substitute for the common case of "don't bother with monsters that just stand there." It's *behavior*-based, not species-based:
+```lua
+if (AutoDetectPlant==1 and IsActive[v]~=1) then
+    if (motion is STAND, DAMAGE, or DEAD) then IsActive[v]=0  -- stays ignored
+    else IsActive[v]=1 end                                    -- flips permanently attackable
+end
+```
+A monster is skipped for as long as it's never shown anything but standing/taking-damage/dying since it first came into view. The moment it moves under its own power even once (walks, notices you, approaches), it's marked active for the rest of that spawn's life and gets attacked normally from then on. This will also catch ordinary aggressive monsters that happen to spawn standing still, and won't catch a mobile monster you specifically want ignored (an MVP that walks around, for instance) — it's a coarse "ignore idle things" switch, not a targeted ignore-list. Confirmed live on uaRO: correctly leaves alone monsters that never move, once #4/#5 above are already fixed (otherwise this setting alone was masking the real bug — see the table above).
 
 ## Reapplying after an AzzyAI reinstall
 
