@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-08-20
+
+### Added
+- F1-F12 skill-key gotcha (Installation complete item 9 + `TROUBLESHOOTING.md`) now leads with a simpler fix: remap the game's own hotkey bar down one keyboard row instead of fighting macOS/keyboard-firmware F-row settings — prompted by a Discord player report (MrStealYoGirl) that skills were unusable via mouse-only.
+
 ## [0.19.0] - 2026-08-20
 
 ### Changed
