@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-20
+
+### Added
+- `AZZYAI_FIXES.md` gained a full "Installing AzzyAI" section — this repo previously only covered fixing AzzyAI once already installed, never how to get it onto a fresh uaRO install in the first place (download source, exact file placement, in-game activation, verification).
+  - Verified download source: [github.com/SpenceKonde/AzzyAI](https://github.com/SpenceKonde/AzzyAI) (author's own repo, no packaged Releases — the zip archive is the real download).
+  - `SKILL.md` now points at this from a new "Optional: AzzyAI" section and an *Installation complete* walkthrough item, instead of AzzyAI being entirely undiscoverable from the main install flow.
+  - Companion Claude Code skill `azzyai-uaro-fix` updated to match (install flow + routing between "fresh install" and "already installed, won't attack").
+
 ## [0.19.2] - 2026-08-20
 
 ### Fixed

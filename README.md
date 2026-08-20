@@ -4,7 +4,7 @@
 
 [`SKILL.md`](./SKILL.md) is a self-contained playbook written *for an AI coding agent* (Claude Code, OpenAI Codex, or GitHub Copilot) to read and execute, not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing end to end. Curious what that actually involves? Open `SKILL.md` — it's all in there.
 
-Already installed and playing, but AzzyAI (the third-party mercenary/homunculus auto-attack AI) won't actually attack anything? That's a separate, later-stage problem covered in [`AZZYAI_FIXES.md`](./AZZYAI_FIXES.md), not this file.
+Want AzzyAI (the third-party mercenary/homunculus auto-attack AI) too — installing it fresh, or already have it but it won't actually attack anything? Both are a separate, later-stage topic covered in [`AZZYAI_FIXES.md`](./AZZYAI_FIXES.md), not this file.
 
 ## The problem this solves
 

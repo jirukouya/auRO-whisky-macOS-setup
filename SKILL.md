@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.19.2
+version: 0.20.0
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -50,6 +50,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 [Installation complete](#installation-complete--post-this-once-step-12-passes)
 
 **Reference (consult as needed, not part of the linear install path):**
+[Optional: AzzyAI](#optional-azzyai-mercenaryhomunculus-auto-attack-ai) — mercenary/homunculus auto-attack AI, full guide in `AZZYAI_FIXES.md` ·
 [Troubleshooting reference](./TROUBLESHOOTING.md) — Known open issues + Common Gotchas table, tagged by Category, split into its own file at v0.19.0 ·
 [Uninstall / rollback](#uninstall--rollback) ·
 [Credits & Disclaimer](#credits--disclaimer)
@@ -1328,6 +1329,11 @@ Then walk the user through these four points, every time, regardless of how the 
 7. **`UaRO Game.app` skips the patcher — use it as a quick relaunch shortcut, not a permanent replacement.** It launches the game directly with no update check at all. Run `UaRO Patcher.app` at least once per session, or whenever a patch is known to have shipped, so this bottle actually gets it. See `TROUBLESHOOTING.md` for the unresolved risk this carries.
 8. **If `uaro-cli` was built**, mention it's available from any Terminal window: `uaro-cli kill` to force-quit a stuck game/patcher, `uaro-cli launch` to start playing, `uaro-cli repair` to re-sign/re-register the launcher apps after a macOS update or manual edit — all three are shortcuts for things this skill otherwise does by hand.
 9. **F1–F12 won't work as skill keys by default** — they'll trigger Mac's brightness/volume/Mission Control instead of your skills. Easiest fix: in the game's own Hotkey settings, shift your whole skill bar down one row — `F1`–`F12` → `1`–`9`, `1`–`9` → `Q`–`O`, `Q`–`O` → `A`–`L`. (Want to keep skills on the real F-keys instead? See `TROUBLESHOOTING.md`'s Input/Keyboard rows for the macOS/keyboard-firmware fix.)
+10. **Want a mercenary or homunculus to auto-attack for you?** That's a separate, optional add-on (AzzyAI, third-party) — see *Optional: AzzyAI* right below for the install guide.
+
+## Optional: AzzyAI (mercenary/homunculus auto-attack AI)
+
+AzzyAI is a third-party Lua AI that auto-fights with a mercenary or homunculus instead of needing manual commands every fight. It's not part of the core uaRO install and this file doesn't duplicate its setup — full install steps (download source, exactly where the files go, how to activate it in-game, how to verify it worked) plus the fix for uaRO's own known "installs fine, never attacks" private-server quirk are in [`AZZYAI_FIXES.md`](./AZZYAI_FIXES.md) in this same repo. If a Claude Code session is doing this, the companion `azzyai-uaro-fix` skill drives it end to end — just ask to install or fix AzzyAI.
 
 ## Troubleshooting reference
 

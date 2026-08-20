@@ -1,4 +1,56 @@
-# Fixing AzzyAI on uaRO
+# Installing and fixing AzzyAI on uaRO
+
+AzzyAI is a third-party Lua AI for controlling a mercenary or homunculus. This file covers both halves: getting it onto a fresh uaRO install (below), and the five-cause fix for the "installs fine but never attacks" symptom every private-server install of it eventually hits (further down).
+
+## Installing AzzyAI
+
+**Source: [github.com/SpenceKonde/AzzyAI](https://github.com/SpenceKonde/AzzyAI)** — the author's own repo, still the canonical source even though the README says it's no longer actively maintained (last pushed 2020, no packaged Releases, so the download is the repo's own zip archive, not a versioned release asset). Never point a player at a random forum re-upload — this repo is public, verifiable, and confirmed reachable.
+
+```bash
+curl -fL --progress-bar -o ~/Downloads/AzzyAI-master.zip \
+  https://github.com/SpenceKonde/AzzyAI/archive/refs/heads/master.zip
+```
+
+If the player would rather click through a browser instead of a terminal command: the repo's green **Code → Download ZIP** button produces the exact same file.
+
+**Locate the game's `USER_AI` folder** — don't assume the path, a fresh uaRO install (via the companion `SKILL.md` in this repo) already has one with a default AI already in it:
+
+```bash
+find ~ -maxdepth 6 -type d -iname "USER_AI" 2>/dev/null
+```
+
+**Extract to a scratch folder first, then copy — never extract directly on top of `USER_AI`.** This is the one step most likely to be done wrong: the GitHub zip's internal layout nests everything one level deeper than AzzyAI's own historical packaged releases (the ones its `Documentation.pdf` was written against) — extracting it produces `AzzyAI-master/USER_AI/<the actual .lua files, AzzyAIConfig.exe, Documentation.pdf>`, not the flat `AzzyAI-master/<files>` the PDF describes. **What has to land in the game's real `USER_AI/` folder is the *contents* of `AzzyAI-master/USER_AI/`, not the `AzzyAI-master` folder itself and not a nested `USER_AI` folder inside it:**
+
+```bash
+mkdir -p /tmp/azzyai-extract
+ditto -xk ~/Downloads/AzzyAI-master.zip /tmp/azzyai-extract
+```
+
+**Before copying, ask whether the player wants to keep any existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files) — copying AzzyAI's version over the top replaces it. Most players installing AzzyAI want exactly that, but confirm rather than assuming, per AzzyAI's own documented caveat:
+
+```bash
+USER_AI_DIR="<the real path find just printed>"
+cp -R /tmp/azzyai-extract/AzzyAI-master/USER_AI/. "$USER_AI_DIR/"
+```
+
+**Turn it on — this step is easy to forget and silently skip.** Files being present in `USER_AI/` does *not* mean AzzyAI is active for a character; it has to be switched on from inside the game, per-character, every time it's freshly enabled:
+1. Start the game, log in to the character that should use it.
+2. In chat, type `/merai` (mercenary) or `/hoai` (homunculus), repeating if needed until it confirms the AI has been customized.
+3. Summon the mercenary/homunculus (or relog, if a homunculus is already out) so it actually picks up the new AI.
+
+**Verify the install actually took, don't just trust step 2 above:**
+
+```bash
+ls "$GAME_DIR"/AAIStartM.txt "$GAME_DIR"/AAIStartH.txt 2>/dev/null
+```
+
+At least one of these (M for mercenary, H for homunculus, matching whichever was activated) should exist in the game's root folder — not `USER_AI/` — right after step 2's activation. **If neither file appears, AzzyAI isn't actually running yet** — this is AzzyAI's own documented signal for a failed install, not just a diagnostic log to read later.
+
+**What almost certainly happens next, on uaRO specifically:** the mercenary/homunculus will follow around but never attack, regardless of config. This is expected on private servers — see *Root causes* below, and apply all five fixes as a matter of course on uaRO rather than waiting for the player to report it, since this project has already confirmed uaRO hits every one of them.
+
+**One caveat on file versions:** the GitHub source isn't guaranteed byte-identical to the specific `AzzyAI 1.551` packaged release the fixes below were originally diagnosed against (file sizes differ slightly) — but the five root causes are long-standing, core AzzyAI logic, not version-specific quirks, and every patch below is applied by searching for the actual code pattern (never a hardcoded line number), so it holds regardless of exactly which build was downloaded.
+
+## Fixing AzzyAI: "installs fine, but never attacks"
 
 AzzyAI (a third-party Lua AI for controlling a mercenary or homunculus) installs fine on uaRO and reports "started successfully," but the mercenary/homunculus just stands there — no auto-attack, no matter how the config is tuned.
 
