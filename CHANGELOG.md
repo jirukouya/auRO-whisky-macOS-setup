@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-08-20
+
+### Fixed
+- Found by a fresh-session cold read of the v0.19.0 restructuring: Step 9b's `EditMenu` cleanup ran before its own stated "bottle must be closed first" precondition check; Phase C's header omitted Step 9b from its own step range; TROUBLESHOOTING.md's category list was missing `Crash/Patcher` (used only in Known open issues, not the table); the TOC didn't explain why `1a` precedes `1`. All four fixed — reordering, one added tag, one clarifying sentence, no behavior changes.
+
 ## [0.19.1] - 2026-08-20
 
 ### Added

@@ -53,7 +53,7 @@ This is explicitly **not yet root-caused** — don't assume a future session sol
 
 ## Common Gotchas (reference table)
 
-Sorted, and taggable, by **Category** — use it to jump straight to the relevant rows instead of scanning the whole table: `Install/Homebrew`, `Install/Download`, `Install/Installer`, `Bottle/Config`, `Runtime/Wine`, `Installer/FCOM`, `Config/Graphics`, `Launcher/Signing`, `Input/Keyboard`, `Crash/Gameplay`, `Tooling/Environment`.
+Sorted, and taggable, by **Category** — use it to jump straight to the relevant rows instead of scanning the whole table: `Install/Homebrew`, `Install/Download`, `Install/Installer`, `Bottle/Config`, `Runtime/Wine`, `Installer/FCOM`, `Config/Graphics`, `Launcher/Signing`, `Input/Keyboard`, `Crash/Gameplay`, `Tooling/Environment`. (`Crash/Patcher` also appears in this file, but only in Known open issues above — this table has no row tagged with it.)
 
 | Category | Symptom | Cause | Fix |
 |---|---|---|---|

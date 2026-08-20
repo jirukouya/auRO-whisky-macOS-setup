@@ -1,6 +1,6 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.19.1
+version: 0.19.2
 description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
 ---
 
@@ -12,7 +12,7 @@ This is not a rewrite from theory. It is the corrected, verified procedure after
 
 ## Table of contents
 
-**Two separate numbering schemes appear below, on purpose — don't conflate them:** `1. Parameters`/`2. Pre-flight`/`2a`/`2b` are one-time setup/detection sections that run *before* the linear install begins; `Step 1` through `Step 12` are the install sequence itself, grouped into five phases (A–E) purely for navigation — the phase headers don't rename or renumber any step, and every cross-reference elsewhere in this file still says "Step N", not "Phase X". `2. Pre-flight` and `Step 2` are unrelated despite the shared digit.
+**Two separate numbering schemes appear below, on purpose — don't conflate them:** `1. Parameters`/`2. Pre-flight`/`2a`/`2b` are one-time setup/detection sections that run *before* the linear install begins; `Step 1` through `Step 12` are the install sequence itself, grouped into five phases (A–E) purely for navigation — the phase headers don't rename or renumber any step, and every cross-reference elsewhere in this file still says "Step N", not "Phase X". `2. Pre-flight` and `Step 2` are unrelated despite the shared digit. **`1a` deliberately comes before `1` in reading order**, not after — Section 0 tells you to post the progress table "(format below)" before you've seen it once, so `1a` shows that format immediately, ahead of `1. Parameters`, rather than leaving it to be found later.
 
 [**Quick routing — where do I start?**](#quick-routing--where-do-i-start) Read this first — it tells you which part of this file actually applies to this session, before you commit to reading the whole thing top to bottom.
 
@@ -590,7 +590,7 @@ ls -la "$SETUP" "$SETUP.orig-backup"   # sizes must match exactly
 
 **If setup.exe crashes at a different `0042xxxx` address:** subtract the PE ImageBase `0x400000` to get the file offset. `0x0042C0CD` → Site A, `0x00421E39` → Site B. Any other address is an uncatalogued third site from a newer installer build — dump 16 bytes around it (`xxd -s $((0xOFFSET - 8)) -l 16 setup.exe`) and treat it as a new finding, don't assume the two offsets above are permanent across future uaRO releases.
 
-## Phase C — Client readiness (Steps 9–10)
+## Phase C — Client readiness (Steps 9–9b–10)
 
 Get the patcher's embedded browser working (Gecko), fix the one keybind scheme that's wrong by default, then write the game's own config files.
 
@@ -651,18 +651,18 @@ When the "Wine Gecko Installer" dialog appears, **click Install** and wait for i
 
 **Don't fix this by disabling the hidden Edit menu (`EditMenu` registry key) — that was tried and tested for real, and it works, but it breaks something else.** Disabling that menu does stop it from swallowing `Cmd+A`/`Cmd+Z`, but that same hidden menu is *also* what makes `Cmd+C`/`Cmd+V` paste correctly in the first place (by silently converting them into the `Ctrl+C`/`Ctrl+V` the game actually expects) — so disabling it trades one broken shortcut for another. **The actual fix is to stop using `Cmd` for these shortcuts at all, and use `Option` instead** — `Option` was never part of that hidden menu's shortcut list, so it was never at risk of being swallowed to begin with, and this matches how uaRO already behaves for anyone who's played it in a Windows VM (VMware Fusion, etc.), where `Option`/`Alt` has always been the key that triggers these shortcuts.
 
+**Do this after Step 9, before the patcher/game is ever launched for real play** — and any time this symptom is reported on an existing install. These settings (both the check right below and the actual fix further down) are only read when a Wine window is created, so a fully closed game/bottle is required first — confirm that before touching either:
+
+```bash
+pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running — close it first, this fix needs a clean bottle" || echo "Clean, safe to proceed"
+```
+
 **If this bottle previously had the old `EditMenu`-disable fix applied, undo it first** (check with `wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu` — any result at all, even empty, means it's set):
 
 ```bash
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
 eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
 wine64 reg delete 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v EditMenu /f 2>/dev/null || true
-```
-
-**Do this after Step 9, before the patcher/game is ever launched for real play** — and any time this symptom is reported on an existing install. These settings are only read when a Wine window is created, so a fully closed game/bottle is required first:
-
-```bash
-pgrep -f "Wine/bin/wine64-preloader" >/dev/null && echo "uaRO/Wine still running — close it first, this fix needs a clean bottle" || echo "Clean, safe to proceed"
 ```
 
 ```bash
