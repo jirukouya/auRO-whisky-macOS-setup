@@ -1,8 +1,10 @@
 # Installing and fixing AzzyAI on uaRO
 
-AzzyAI is a third-party Lua AI for controlling a mercenary or homunculus. This file covers both halves: getting it onto a fresh uaRO install (below), and the five-cause fix for the "installs fine but never attacks" symptom every private-server install of it eventually hits (further down).
+AzzyAI is a third-party Lua AI for controlling a mercenary or homunculus. This file covers both halves as one numbered sequence, same convention as this repo's `SKILL.md`: **Phase A (Steps 1–5)** gets AzzyAI onto a fresh uaRO install, **Phase B (Steps 6–10)** fixes the "installs fine but never attacks" symptom every private-server install of it eventually hits. On uaRO, expect to walk straight from Step 5 into Step 6 — see the note at the end of Phase A for why.
 
-## Installing AzzyAI
+## Phase A — Installing AzzyAI (Steps 1–5)
+
+## Step 1 — Download AzzyAI
 
 **Source: [github.com/SpenceKonde/AzzyAI](https://github.com/SpenceKonde/AzzyAI)** — the author's own repo, still the canonical source even though the README says it's no longer actively maintained (last pushed 2020, no packaged Releases, so the download is the repo's own zip archive, not a versioned release asset). Never point a player at a random forum re-upload — this repo is public, verifiable, and confirmed reachable.
 
@@ -13,11 +15,15 @@ curl -fL --progress-bar -o ~/Downloads/AzzyAI-master.zip \
 
 If the player would rather click through a browser instead of a terminal command: the repo's green **Code → Download ZIP** button produces the exact same file.
 
-**Locate the game's `USER_AI` folder** — don't assume the path, a fresh uaRO install (via the companion `SKILL.md` in this repo) already has one with a default AI already in it:
+## Step 2 — Locate the game's `USER_AI` folder
+
+Don't assume the path — a fresh uaRO install (via the companion `SKILL.md` in this repo) already has one, with a default AI already in it:
 
 ```bash
 find ~ -maxdepth 6 -type d -iname "USER_AI" 2>/dev/null
 ```
+
+## Step 3 — Extract and copy the right files
 
 **Extract to a scratch folder first, then copy — never extract directly on top of `USER_AI`.** This is the one step most likely to be done wrong: the GitHub zip's internal layout nests everything one level deeper than AzzyAI's own historical packaged releases (the ones its `Documentation.pdf` was written against) — extracting it produces `AzzyAI-master/USER_AI/<the actual .lua files, AzzyAIConfig.exe, Documentation.pdf>`, not the flat `AzzyAI-master/<files>` the PDF describes. **What has to land in the game's real `USER_AI/` folder is the *contents* of `AzzyAI-master/USER_AI/`, not the `AzzyAI-master` folder itself and not a nested `USER_AI` folder inside it:**
 
@@ -33,62 +39,61 @@ USER_AI_DIR="<the real path find just printed>"
 cp -R /tmp/azzyai-extract/AzzyAI-master/USER_AI/. "$USER_AI_DIR/"
 ```
 
-**Turn it on — this step is easy to forget and silently skip.** Files being present in `USER_AI/` does *not* mean AzzyAI is active for a character; it has to be switched on from inside the game, per-character, every time it's freshly enabled:
+## Step 4 — Activate AzzyAI in-game
+
+**This step is easy to forget and silently skip.** Files being present in `USER_AI/` does *not* mean AzzyAI is active for a character; it has to be switched on from inside the game, per-character, every time it's freshly enabled:
 1. Start the game, log in to the character that should use it.
 2. In chat, type `/merai` (mercenary) or `/hoai` (homunculus), repeating if needed until it confirms the AI has been customized.
 3. Summon the mercenary/homunculus (or relog, if a homunculus is already out) so it actually picks up the new AI.
 
-**Verify the install actually took, don't just trust step 2 above:**
+## Step 5 — Verify the install
+
+Don't just trust Step 4 above — confirm it left evidence:
 
 ```bash
 ls "$GAME_DIR"/AAIStartM.txt "$GAME_DIR"/AAIStartH.txt 2>/dev/null
 ```
 
-At least one of these (M for mercenary, H for homunculus, matching whichever was activated) should exist in the game's root folder — not `USER_AI/` — right after step 2's activation. **If neither file appears, AzzyAI isn't actually running yet** — this is AzzyAI's own documented signal for a failed install, not just a diagnostic log to read later.
+At least one of these (M for mercenary, H for homunculus, matching whichever was activated) should exist in the game's root folder — not `USER_AI/` — right after Step 4's activation. **If neither file appears, AzzyAI isn't actually running yet** — this is AzzyAI's own documented signal for a failed install, not just a diagnostic log to read later.
 
-**What almost certainly happens next, on uaRO specifically:** the mercenary/homunculus will follow around but never attack, regardless of config. This is expected on private servers — see *Root causes* below, and apply all five fixes as a matter of course on uaRO rather than waiting for the player to report it, since this project has already confirmed uaRO hits every one of them.
+**What almost certainly happens next, on uaRO specifically:** the mercenary/homunculus will follow around but never attack, regardless of config. This is expected on private servers — go straight into Phase B below and apply all five fixes as a matter of course on uaRO rather than waiting for the player to report it, since this project has already confirmed uaRO hits every one of them.
 
-**One caveat on file versions:** the GitHub source isn't guaranteed byte-identical to the specific `AzzyAI 1.551` packaged release the fixes below were originally diagnosed against (file sizes differ slightly) — but the five root causes are long-standing, core AzzyAI logic, not version-specific quirks, and every patch below is applied by searching for the actual code pattern (never a hardcoded line number), so it holds regardless of exactly which build was downloaded.
+**One caveat on file versions:** the GitHub source isn't guaranteed byte-identical to the specific `AzzyAI 1.551` packaged release Phase B was originally diagnosed against (file sizes differ slightly) — but all five causes below are long-standing, core AzzyAI logic, not version-specific quirks, and every patch is applied by searching for the actual code pattern (never a hardcoded line number), so it holds regardless of exactly which build was downloaded.
 
-## Fixing AzzyAI: "installs fine, but never attacks"
-
-AzzyAI (a third-party Lua AI for controlling a mercenary or homunculus) installs fine on uaRO and reports "started successfully," but the mercenary/homunculus just stands there — no auto-attack, no matter how the config is tuned.
-
-**This is not an install mistake.** AzzyAI was written against official Gravity server conventions. uaRO (an rAthena-class private server) allocates actor IDs differently, and AzzyAI's own documentation admits this class of problem outright: *"It is known and expected that AzzyAI will have targeting problems on most illegal private servers."* Five separate causes stack up to produce the "stands there doing nothing" symptom, and all five have to be fixed together — fixing only some of them still looks exactly like "not working."
-
-This was diagnosed on a mercenary; the same code paths are shared with the homunculus AI (`AI.lua` uses the same `AI_main.lua`/`AzzyUtil.lua`), so the same fixes apply to `H_Config.lua` where `M_Config.lua` is named below.
-
-## Symptom
+## Phase B — Fixing "installs fine, but never attacks" (Steps 6–10)
 
 AzzyAI installs, `/merai` (or `/hoai`) confirms the switch in chat, the mercenary/homunculus follows you around — and simply never attacks, regardless of `M_Config.lua`/`M_Tactics.lua` tuning.
 
-## Root causes (all five needed)
+**This is not an install mistake.** AzzyAI was written against official Gravity server conventions. uaRO (an rAthena-class private server) allocates actor IDs differently, and AzzyAI's own documentation admits this class of problem outright: *"It is known and expected that AzzyAI will have targeting problems on most illegal private servers."* Five separate causes stack up to produce the "stands there doing nothing" symptom, and **all five (Steps 6–10) have to be checked/fixed together** — fixing only some of them still looks exactly like "not working."
 
-| # | File | Cause | Fix |
-|---|---|---|---|
-| 1 | `AI/USER_AI/Const_.lua` | Version string is `"1.552"`; AzzyAI's own version-check regex truncates it to `"1.55"` and logs a false "wrong version" / "ranged pierce exploit" warning in `AAIStartM.txt`/`AAIStartH.txt` | **No fix needed** — cosmetic false positive, doesn't gate any AI logic. Safe to ignore. |
-| 2 | `AI/USER_AI/M_Config.lua` (`H_Config.lua` for homunculus) | `StickyStandby=1` is AzzyAI's own stock default: the moment the mercenary enters its "follow" state (i.e. most of the time), it's silently forced into non-aggressive standby | Set `StickyStandby = 0` |
-| 3 | `AI/USER_AI/M_Config.lua` (`H_Config.lua`) | `AutoDetectPlant=1` is also AzzyAI's stock default: the first time it sees a monster standing still, it's treated as a possible passive "plant"-type monster and excluded from targeting until it moves on its own | Set `AutoDetectPlant = 0` while diagnosing #4/#5 below — with those still broken, this setting alone can make it look like *everything* is a plant. Once #4/#5 are fixed, this becomes a genuine preference (see "Ignoring stationary/plant monsters" near the end) rather than something that needs to be off. |
-| 4 | `AI/USER_AI/AI_main.lua`, ~line 3345 | `if (v > MagicNumber2) then Players[v]=1` classifies any actor ID above 100,000 as a player. **uaRO's monster GIDs are also above 100,000** (observed range: ~110,148,xxx), so every monster gets misclassified as a player and never enters the `Targets[]` table | `if (v > MagicNumber2 and IsMonster(v)==0) then` |
-| 5 | `AI/USER_AI/AzzyUtil.lua`, `IsPlayer()` (~line 321) | Same 100,000-ID threshold, in a second, independent function. `GetTact()` calls `IsPlayer()` directly and returns "no tactic" (0 = don't attack) for anything it flags as a player — so even if #4 is fixed and a monster makes it into `Targets[]`, this is what actually kills the attack decision | `if (id>MagicNumber2 and IsMonster(id)==0) then` |
+This was diagnosed on a mercenary; the same code paths are shared with the homunculus AI (`AI.lua` uses the same `AI_main.lua`/`AzzyUtil.lua`), so the same fixes apply to `H_Config.lua` where `M_Config.lua` is named below.
 
-\#4 and #5 are the real bugs, and they're two **independent** functions that each hit the same wrong assumption (actor IDs above 100,000 = player) — this is why it's easy to fix one and still see the mercenary standing idle. Both have to be patched.
+## Step 6 — `Const_.lua` version-check false positive
 
-## Optional: engagement range for active farming
+**File: `AI/USER_AI/Const_.lua`. No fix needed.** Version string is `"1.552"`; AzzyAI's own version-check regex truncates it to `"1.55"` and logs a false "wrong version" / "ranged pierce exploit" warning in `AAIStartM.txt`/`AAIStartH.txt`. Cosmetic false positive — doesn't gate any AI logic. Safe to ignore; check it off the list and move on.
 
-If the goal is aggressive auto-farming rather than defend-only guarding, keep these internally consistent in `M_Config.lua` — the "how far will it chase" bound should be `>=` the "how far will it look for a fight" distance, or you'll get monsters detected but never chased:
+## Step 7 — Fix `StickyStandby`
+
+**File: `AI/USER_AI/M_Config.lua` (`H_Config.lua` for homunculus).** `StickyStandby=1` is AzzyAI's own stock default: the moment the mercenary enters its "follow" state (i.e. most of the time), it's silently forced into non-aggressive standby.
 
 ```lua
-StationaryAggroDist  = 12
-MobileAggroDist      = 12
-StationaryMoveBounds = 14
-MobileMoveBounds     = 14
+StickyStandby = 0
 ```
-(AzzyAI's own stock defaults are `12/7/14/9` — internally consistent already, just narrower while moving. The above just widens the mobile case to match.)
 
-## Patches
+## Step 8 — Fix `AutoDetectPlant` (temporarily)
 
-**`AI_main.lua`:**
+**File: `AI/USER_AI/M_Config.lua` (`H_Config.lua`).** `AutoDetectPlant=1` is also AzzyAI's stock default: the first time it sees a monster standing still, it's treated as a possible passive "plant"-type monster and excluded from targeting until it moves on its own.
+
+```lua
+AutoDetectPlant = 0
+```
+
+Set this **while diagnosing Steps 9–10** — with those still broken, this setting alone can make it look like *everything* is a plant. Once Steps 9–10 are fixed, this becomes a genuine preference (see *Practical fallback for mercenary-only setups* near the end) rather than something that needs to be off.
+
+## Step 9 — Patch `AI_main.lua`'s player/monster misclassification
+
+**File: `AI/USER_AI/AI_main.lua`, ~line 3345 (search for the code, don't trust the line number — it drifts across AzzyAI versions).**
+
 ```lua
 -- before:
 if (v > MagicNumber2) then
@@ -98,7 +103,12 @@ if (v > MagicNumber2 and IsMonster(v)==0) then --uaRO monster IDs also exceed Ma
     Players[v]=1
 ```
 
-**`AzzyUtil.lua`:**
+`if (v > MagicNumber2) then Players[v]=1` classifies any actor ID above 100,000 as a player. **uaRO's monster GIDs are also above 100,000** (observed range: ~110,148,xxx), so every monster gets misclassified as a player and never enters the `Targets[]` table.
+
+## Step 10 — Patch `AzzyUtil.lua`'s `IsPlayer()` — the same bug, a second function
+
+**File: `AI/USER_AI/AzzyUtil.lua`, `IsPlayer()` (~line 321, same line-number caveat as Step 9).**
+
 ```lua
 -- before:
 function IsPlayer(id)
@@ -118,9 +128,21 @@ function IsPlayer(id)
 end
 ```
 
-**`M_Config.lua`** (or `H_Config.lua`): set `StickyStandby = 0` and `AutoDetectPlant = 0`.
+Same 100,000-ID threshold, in a second, **independent** function. `GetTact()` calls `IsPlayer()` directly and returns "no tactic" (0 = don't attack) for anything it flags as a player — so even if Step 9 is fixed and a monster makes it into `Targets[]`, this is what actually kills the attack decision. Steps 9 and 10 are two independent functions that each hit the same wrong assumption — this is why it's easy to fix one and still see the mercenary standing idle. **Both have to be patched; neither alone is enough.**
 
-Neither `#4` nor `#5` touch `MagicNumber`/`MagicNumber2` themselves — a private server's monster and player ID ranges can overlap in ways a single static threshold can't cleanly separate, but `IsMonster()` (an engine-native call) is reliable regardless of ID magnitude, confirmed by direct log capture (see below). Cross-checking against it is safer than guessing a new threshold.
+Neither Step 9 nor Step 10 touch `MagicNumber`/`MagicNumber2` themselves — a private server's monster and player ID ranges can overlap in ways a single static threshold can't cleanly separate, but `IsMonster()` (an engine-native call) is reliable regardless of ID magnitude, confirmed by direct log capture (see *How to verify* below). Cross-checking against it is safer than guessing a new threshold.
+
+## Optional: engagement range for active farming
+
+If the goal is aggressive auto-farming rather than defend-only guarding, keep these internally consistent in `M_Config.lua` — the "how far will it chase" bound should be `>=` the "how far will it look for a fight" distance, or you'll get monsters detected but never chased:
+
+```lua
+StationaryAggroDist  = 12
+MobileAggroDist      = 12
+StationaryMoveBounds = 14
+MobileMoveBounds     = 14
+```
+(AzzyAI's own stock defaults are `12/7/14/9` — internally consistent already, just narrower while moving. The above just widens the mobile case to match.)
 
 ## How to verify (and how this was actually diagnosed)
 
@@ -136,7 +158,7 @@ Steps:
 3. Read `AAI_ACTORS.log`. If your server's monster GIDs are also above `MagicNumber2` (100,000), you're hitting the same bug and the same fix applies.
 4. Turn the log back off afterward (`--LogEnable["AAI_ACTORS"]=1`) — it writes a line for every newly-seen actor and there's no reason to keep it running once confirmed.
 
-If you need to go one layer deeper (confirm whether the mercenary/homunculus is actually deciding to engage, not just seeing the target), add a temporary probe right after the `aggro`/`GetEnemyList()` call in `AI_main.lua`'s `OnIDLE_ST()` (search for `SelectEnemy(GetEnemyList(MyID,aggro))`) logging `aggro`, `HPPercent(MyID)`, `ShouldStandby`, `StickyStandby`, and the returned enemy-list count under a custom `LogEnable[...]` channel. This is what isolated cause #5 after #2-#4 were already fixed and the mercenary was still idle.
+If you need to go one layer deeper (confirm whether the mercenary/homunculus is actually deciding to engage, not just seeing the target), add a temporary probe right after the `aggro`/`GetEnemyList()` call in `AI_main.lua`'s `OnIDLE_ST()` (search for `SelectEnemy(GetEnemyList(MyID,aggro))`) logging `aggro`, `HPPercent(MyID)`, `ShouldStandby`, `StickyStandby`, and the returned enemy-list count under a custom `LogEnable[...]` channel. This is what isolated Step 10's cause after Steps 7–9 were already fixed and the mercenary was still idle.
 
 ## Ignoring specific monsters by species (e.g. an MVP)
 
@@ -159,8 +181,8 @@ if (AutoDetectPlant==1 and IsActive[v]~=1) then
     else IsActive[v]=1 end                                    -- flips permanently attackable
 end
 ```
-A monster is skipped for as long as it's never shown anything but standing/taking-damage/dying since it first came into view. The moment it moves under its own power even once (walks, notices you, approaches), it's marked active for the rest of that spawn's life and gets attacked normally from then on. This will also catch ordinary aggressive monsters that happen to spawn standing still, and won't catch a mobile monster you specifically want ignored (an MVP that walks around, for instance) — it's a coarse "ignore idle things" switch, not a targeted ignore-list. Confirmed live on uaRO: correctly leaves alone monsters that never move, once #4/#5 above are already fixed (otherwise this setting alone was masking the real bug — see the table above).
+A monster is skipped for as long as it's never shown anything but standing/taking-damage/dying since it first came into view. The moment it moves under its own power even once (walks, notices you, approaches), it's marked active for the rest of that spawn's life and gets attacked normally from then on. This will also catch ordinary aggressive monsters that happen to spawn standing still, and won't catch a mobile monster you specifically want ignored (an MVP that walks around, for instance) — it's a coarse "ignore idle things" switch, not a targeted ignore-list. Confirmed live on uaRO: correctly leaves alone monsters that never move, once Steps 9–10 above are already fixed (otherwise this setting alone was masking the real bug).
 
 ## Reapplying after an AzzyAI reinstall
 
-Reinstalling AzzyAI (copying a fresh release into `USER_AI/`) overwrites `AI_main.lua`, `AzzyUtil.lua`, and `M_Config.lua`/`H_Config.lua` back to stock, which reverts fixes #2-#5. Reapply them from this file. #1 needs no action either way.
+Reinstalling AzzyAI (copying a fresh release into `USER_AI/`) overwrites `AI_main.lua`, `AzzyUtil.lua`, and `M_Config.lua`/`H_Config.lua` back to stock, which reverts Steps 7–10. Reapply them from this file. Step 6 needs no action either way.
