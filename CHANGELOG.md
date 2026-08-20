@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-08-20
+
+### Changed
+- Reorganized `AZZYAI_FIXES.md` into the same Phase-wraps-numbered-Steps structure `SKILL.md` uses (Phase A/B, Steps 1-10) instead of prose-with-bold-headers — no technical content changed, matching the companion `azzyai-uaro-fix` skill.
+
 ## [0.20.0] - 2026-08-20
 
 ### Added
