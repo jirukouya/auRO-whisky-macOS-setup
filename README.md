@@ -112,7 +112,7 @@ Full version history lives in [CHANGELOG.md](./CHANGELOG.md) — check `SKILL.md
 
 This is unofficial. Run it at your own risk:
 
-- **No guarantees.** This is a personal project, shared as-is — see *Known open issues* in `SKILL.md` for what's already known to be imperfect, including one unresolved crash.
+- **No guarantees.** This is a personal project, shared as-is — see [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for what's already known to be imperfect, including one unresolved crash.
 - **This patches a third-party binary.** The uaRO installer gets a few bytes changed to work around a Rosetta translation bug. A backup is made automatically first, but it's still altering someone else's executable.
 - **Real changes to your Mac.** This installs Homebrew, Rosetta, Whisky, three apps in `/Applications`, and optionally a small `uaro-cli` command-line helper in `/opt/homebrew/bin` — all reversible (see *Uninstalling* above), but not a sandboxed trial run.
 - **No data collection.** Nothing here collects, transmits, or stores your personal data, credentials, or usage. Every login along the way (your Mac's admin password, your uaRO account) is handled directly by you — never by this skill or the AI running it.

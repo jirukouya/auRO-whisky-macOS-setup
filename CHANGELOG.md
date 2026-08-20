@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-20
+
+### Changed
+- Restructured for scannability: `SKILL.md` gained a Quick Routing table and 5 navigational Phase headers (A–E) grouping the existing Steps 1–12, and a condensed "5 rules" callout at the top of Section 0.
+  - Known Open Issues and the Common Gotchas table moved to a new `TROUBLESHOOTING.md` — pure lookup-on-symptom content, never needed for a normal successful install.
+  - `CLAUDE.md`'s standing single-file constraint updated to describe this two-file model.
+
 ## [0.18.0] - 2026-08-01
 
 ### Fixed
