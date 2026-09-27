@@ -1294,7 +1294,7 @@ uaro-cli repair; echo "exit: $?"   # confirm back to "All checks passed." / exit
 
 **Standing rule, same as the three launcher scripts:** if `BOTTLE_NAME`, `GAME_DIR`, or the set of process names killed on relaunch ever changes, update this script too — it's a fourth copy of that same logic, not exempt from the "keep all launcher-adjacent scripts in sync" rule in Step 11.
 
-**Why this isn't a `~/.zshrc` alias/function instead** (a real suggestion from Discord contributor jax, considered and declined): a `~/.zshrc` edit is a global, unversioned mutation to a file this skill doesn't own and can't cleanly find-and-remove on uninstall, and it silently assumes the user's shell is `zsh` specifically. A standalone script dropped into an already-`PATH`'d directory gets the same one-word convenience (`uaro-cli kill`, not a full path) while staying a single file this skill can create, update, and delete cleanly — consistent with this project's existing preference for self-contained, reversible artifacts over editing shared user config.
+**Why this isn't a `~/.zshrc` alias/function instead** (a real suggestion from Discord contributor Rhya, considered and declined): a `~/.zshrc` edit is a global, unversioned mutation to a file this skill doesn't own and can't cleanly find-and-remove on uninstall, and it silently assumes the user's shell is `zsh` specifically. A standalone script dropped into an already-`PATH`'d directory gets the same one-word convenience (`uaro-cli kill`, not a full path) while staying a single file this skill can create, update, and delete cleanly — consistent with this project's existing preference for self-contained, reversible artifacts over editing shared user config.
 
 ## Phase E — Verify & wrap-up (Step 12)
 
