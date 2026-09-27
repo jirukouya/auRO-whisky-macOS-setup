@@ -86,11 +86,11 @@ places.
 - `SKILL.md`, `README.md`, and `TROUBLESHOOTING.md` must contain zero
   Chinese characters (verify with `grep -n "[一-龥]" <file>` after edits —
   exit 1 means clean).
-- Solo-maintained; an external Discord contributor (jax) shares findings
+- Solo-maintained; an external Discord contributor (Rhya) shares findings
   occasionally but doesn't have write access or visibility into Claude's
   memory layer above.
-- A separate troubleshoot-log file (like jax's own `TROUBLESHOOTING_LOG.md`
-  in his own workspace) was considered and rejected for this repo — it
+- A separate troubleshoot-log file (like Rhya's own `TROUBLESHOOTING_LOG.md`
+  in their own workspace) was considered and rejected for this repo — it
   would be a second surface to keep in sync, and an uncurated timeline
   mixes abandoned dead-ends with the final decision at equal weight. Richer
   commit messages (point 1 above) were chosen instead.
