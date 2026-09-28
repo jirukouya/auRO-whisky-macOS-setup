@@ -1,7 +1,7 @@
 ---
 name: auro-whisky-macos-setup
-version: 0.20.4
-description: Installs and configures uaRO (a Ragnarok Online private server) on macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime — end to end on a fresh Mac. Covers Homebrew, Rosetta 2, Whisky.app, WhiskyWine runtime, bottle creation/config, downloading and running the uaRO installer, FCOM byte-patches for Rosetta compatibility, Wine Gecko pre-install, game config files, building three launcher .app bundles (Patcher, Settings, and an optional skip-patcher Game launcher), and an optional `uaro-cli` command-line helper (kill/launch/repair). Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "uaRO on a new Mac", "whisky uaro install", "uninstall uaRO", or whenever this file is handed to a fresh session on a brand-new machine with the instruction to just run it. Also covers uninstalling/removing an existing install (see the Uninstall / rollback section).
+version: 0.21.0
+description: Installs, verifies, repairs, and configures uaRO (a Ragnarok Online private server) on Apple Silicon macOS via Homebrew + Whisky + a manually-sourced WhiskyWine runtime. Use this skill for a fresh install, an existing or partial install, a verify-only health check, a repair of a known symptom, a migration to newer fixes, or an uninstall. Trigger on "install uaRO on Mac", "set up uaRO with Whisky", "check my uaRO Whisky install", "repair uaRO", "uaRO patcher stuck", "Gepard error on Whisky", "Program Error in uaRO", "uaRO keyboard or graphics issue", "whisky uaro install", or "uninstall uaRO". Do not use it for CrossOver, generic Wine troubleshooting, or unrelated Windows games.
 ---
 
 # uaRO on macOS via Whisky — Full Install Skill
@@ -76,12 +76,44 @@ This table is a shortcut, not a replacement for the Setup section's own logic �
 > 4. **Shell variables don't reliably survive across separate tool calls.** Re-derive `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` (and any step-local variable) at the top of every block that uses them, even if it was "just set" a few blocks ago.
 > 5. **Verify with the actual command output, not an exit code or "it should have worked."** A syntax-valid file isn't a working file, exit 0 isn't proof a cask actually installed anything, and silence after a patch isn't proof it applied correctly.
 
+### Evidence-driven execution contract
+
+Before touching the machine, choose exactly one route for this run:
+
+| Route | Use when | Default behavior |
+|---|---|---|
+| `fresh` | No usable Whisky/uaRO state is present | Build only after pre-flight checks pass |
+| `adopt` | A partial or older install already exists | Reuse verified state and retrofit only missing fixes |
+| `verify` | The user asks whether an existing install works | Read and measure only; do not reinstall or rebuild |
+| `repair` | A concrete symptom is reported | Identify the failing layer first, then make the smallest scoped fix |
+| `uninstall` | The user wants uaRO or its dependencies removed | Resolve exact targets, back up saves, and use the recovery-first deletion flow below |
+
+Maintain a short state ledger for the chosen route:
+
+```text
+target | current state | desired state | evidence | planned change | rollback
+```
+
+Treat instructions copied from another author, repository, or machine as **transcribed** until they are rerun on this Whisky target. A mechanism-based explanation is **inferred** until a test distinguishes it from competing explanations. Map these states to the host's fact-gate labels when reporting: `CONFIRMED`, `INFERRED`, `ASSUMED`, `UNCONFIRMED`, `CONFLICTING SOURCES`, and `BLOCKED`.
+
+Every completion claim must pass three independent gates:
+
+| Gate | What to prove | Whisky examples |
+|---|---|---|
+| Target | The intended file/config/backup exists at the intended path | `plutil -p`, `cmp`, `test -f`, byte diff |
+| Execution | The actual process loads the intended bottle, environment, and runtime | `shellenv`, `WINEPREFIX`, process args, runtime path, relevant log |
+| Behavior | The user's requested function works under the same route | Patcher advances, settings round-trip, login remains stable, no target symptom |
+
+Passing only one gate is `UNCONFIRMED`, not complete. Startup alone is not a behavior test, and a generated launcher or manifest is not live-runtime evidence.
+
 - **Before answering any "what have we already tried/decided/fixed for this project" question — especially a comparative one, or one about a symptom that might already be a documented issue — read this repo's root `CLAUDE.md` first, then check every source it points to** (commit messages, `CHANGELOG.md`, `TROUBLESHOOTING.md`, and `git notes` — see `CLAUDE.md` for why notes need an explicit `git fetch` to even become visible). Don't answer from whichever one source happens to come to mind first; a past run of this exact skill answered a historical-comparison question from `git log` alone and missed that `CHANGELOG.md` had the closer answer. This applies to *any* agent executing this file, not just one with prior conversation context — that's the whole reason it's written here instead of only remembered.
 - **Probe, don't assume, especially about what's "dead."** The premise "the Homebrew cask is disabled" turned out to be false on one real machine tested — it installed and worked fine. Try the normal path first every time; only fall back to a workaround if the normal path genuinely fails on *this* machine, right now.
 - **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an unconditional `brew install --cask whisky` threw noisy "not permitted" errors against an already-installed app, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
 - **A syntax-valid file is not a working file.** `plutil -lint` only checks that a plist parses as XML — it says nothing about whether the app that reads it can decode it into the shape it expects. Decode-test configs, don't just lint them.
 - **A file existing right after you wrote it is not proof it will still be there in 30 seconds.** On a Mac with iCloud Drive "Desktop & Documents" sync enabled, files written under `~/Documents` *and* `~/Downloads` can be silently relocated into `~/Library/Mobile Documents/com~apple~CloudDocs/...` asynchronously, tens of seconds after creation — long after an immediate check would have reported "fine."
 - **After any binary patch, byte-diff against a backup.** Don't trust that a patch did only what you intended — prove it with `cmp -l`.
+- **Never overwrite an original backup on a rerun.** Create `*.orig-backup` only when it is absent; if it already exists, preserve it and verify that the current target has the same size before patching. A backup made from an already-patched file is not a rollback point.
+- **Do not silently merge an alternate runtime recipe into the default route.** If another guide proposes a different renderer, DLL override, sync mode, or Wine backend, record the current state, test it as an isolated diagnostic branch, and restore the standard route before comparing results.
 - **`dd` writing to a binary file may be blocked in sandboxed/agent shells**, independent of file permissions. If it is, fall back to plain Python `open(path, 'r+b')` — it produces byte-identical results and isn't subject to the same restriction.
 - **Never generate backslash-heavy config content through an unquoted heredoc** (`<< EOF`). Bash silently collapses `\\` pairs to `\` before the inner script even sees them. Always use a quoted delimiter (`<<'EOF'`) or write a real script file.
 - **After every step, post the cumulative progress table (format below) and stop for explicit approval before touching the next step.** Never silently chain two steps together, even when a step "obviously" succeeded and even if the user seems to be in a hurry — this is the user's one visible checkpoint into a long, mostly-invisible process.
@@ -449,6 +481,8 @@ plutil -lint "$META" && plutil -p "$META"
 
 All five calls are safe to run unconditionally — they're idempotent, even though a fresh bottle typically already defaults `dxvkAsync`, `windowsVersion`, and `enhancedSync` correctly and only `dxvk`/`avxEnabled` actually need flipping. Confirm the printed result shows all five as intended before moving on.
 
+**Runtime route gate — keep alternate backend experiments separate from the default install.** This skill's supported default route is the DXVK configuration above. If an external guide proposes builtin `wined3d`, a different `d3d9` policy, a different sync mode, or another `WINEDLLOVERRIDES` value, treat that as an isolated diagnostic branch rather than silently replacing the default. Before testing the branch, record the current `Metadata.plist`, the exact launcher environment, and one reproducible baseline symptom. Test the same target, execution, and behavior gates again; a launcher that opens is not enough. If the branch does not improve the same symptom under the same workload, restore the recorded default configuration and keep the alternative documented as unconfirmed.
+
 **Self-healing check — confirm `wine64` is actually reachable through this bottle before trusting it, don't wait until Step 7's crash to find out:**
 
 ```bash
@@ -545,7 +579,14 @@ Rosetta can't translate certain alternate x87 FCOM instruction encodings; runnin
 
 ```bash
 SETUP="$GAME_DIR/setup.exe"
-cp "$SETUP" "$SETUP.orig-backup"
+if [[ -e "$SETUP.orig-backup" ]]; then
+  [[ "$(stat -f%z "$SETUP")" == "$(stat -f%z "$SETUP.orig-backup")" ]] \
+    || { echo "Existing setup.exe backup has a different size — stop and inspect it before patching"; exit 1; }
+  echo "Preserving existing original backup: $SETUP.orig-backup"
+else
+  cp "$SETUP" "$SETUP.orig-backup"
+  echo "Created original backup: $SETUP.orig-backup"
+fi
 chmod u+w "$SETUP"
 ```
 
@@ -686,7 +727,14 @@ wine64 reg query 'HKEY_CURRENT_USER\Software\Wine\Mac Driver' /v RightOptionIsAl
 The installer already writes most of this correctly; only `WindowLock` typically needs flipping. Back up first, then patch just that key (don't regenerate the whole file blind — the installer's copy has useful comments):
 
 ```bash
-cp "$GAME_DIR/dinput.ini" "$GAME_DIR/dinput.ini.orig-backup"
+if [[ -e "$GAME_DIR/dinput.ini.orig-backup" ]]; then
+  [[ "$(stat -f%z "$GAME_DIR/dinput.ini")" == "$(stat -f%z "$GAME_DIR/dinput.ini.orig-backup")" ]] \
+    || { echo "Existing dinput.ini backup has a different size — stop and inspect it before patching"; exit 1; }
+  echo "Preserving existing original backup: $GAME_DIR/dinput.ini.orig-backup"
+else
+  cp "$GAME_DIR/dinput.ini" "$GAME_DIR/dinput.ini.orig-backup"
+  echo "Created original backup: $GAME_DIR/dinput.ini.orig-backup"
+fi
 python3 -c "
 import re, sys
 p = '$GAME_DIR/dinput.ini'
@@ -703,7 +751,14 @@ grep -E 'MouseFreedom|WindowOnTop|WindowLock|CodePage' "$GAME_DIR/dinput.ini"
 The installer ships a template with placeholder/default values. Back it up, then patch the fields below with a real script file or a **quoted** heredoc — never an unquoted one, since `DX9DEVICENAME`'s Windows device path is backslash-heavy and will silently corrupt otherwise.
 
 ```bash
-cp "$GAME_DIR/savedata/OptionInfo.lua" "$GAME_DIR/savedata/OptionInfo.lua.orig-backup"
+if [[ -e "$GAME_DIR/savedata/OptionInfo.lua.orig-backup" ]]; then
+  [[ "$(stat -f%z "$GAME_DIR/savedata/OptionInfo.lua")" == "$(stat -f%z "$GAME_DIR/savedata/OptionInfo.lua.orig-backup")" ]] \
+    || { echo "Existing OptionInfo.lua backup has a different size — stop and inspect it before patching"; exit 1; }
+  echo "Preserving existing original backup: $GAME_DIR/savedata/OptionInfo.lua.orig-backup"
+else
+  cp "$GAME_DIR/savedata/OptionInfo.lua" "$GAME_DIR/savedata/OptionInfo.lua.orig-backup"
+  echo "Created original backup: $GAME_DIR/savedata/OptionInfo.lua.orig-backup"
+fi
 GUID="{$(uuidgen | tr a-z A-Z)}"
 ```
 
@@ -1302,6 +1357,16 @@ The last checkpoint before calling the install done — confirm the launchers, p
 
 ## Step 12 — First-run verification (do this before considering the install done)
 
+Do not call the installation complete until all three gates below pass for the same bottle and game directory:
+
+| Gate | Required evidence |
+|---|---|
+| Target | Launcher bundles, `Info.plist`, game config, FCOM backup/byte diff, and the selected `GAME_DIR` all read back correctly |
+| Execution | The launcher uses the resolved Whisky CLI, bottle, `WINEPREFIX`, DLL overrides, and runtime actually intended for this install |
+| Behavior | Settings round-trip, the patcher advances past `Getting patch_main.txt...`, and the game reaches a stable login or equivalent user-visible success |
+
+If only the target files pass, report `UNCONFIRMED`; a running process without readable runtime evidence is also `UNCONFIRMED`. If a gate cannot be tested because the user has not clicked through a GUI or logged in, stop at that gate instead of inferring success from the earlier steps.
+
 1. Open `UaRO Settings.app`. Confirm it runs the FCOM re-patch without error, then opens "RO OpenSetup" with no crash. In its Resolution dropdown, pick the closest same-aspect-ratio entry to what the user actually wants (there is no guarantee the exact requested pixel value is offered). Click **Apply**, then **OK**.
 2. Confirm the round-trip: `grep -E "WIDTH|HEIGHT|OLD_WIDTH|OLD_HEIGHT" "$GAME_DIR/savedata/OptionInfo.lua"` should now show the GUI's chosen values in `WIDTH`/`HEIGHT` and the previous values preserved in `OLD_WIDTH`/`OLD_HEIGHT`.
 3. Open `UaRO Patcher.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
@@ -1364,10 +1429,14 @@ Would you like to install AzzyAI now? **Yes / No**
 > BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
 > ```
 
-**Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen:
+**Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen. Use a new local backup directory outside the game folder so the backup survives the uninstall:
 
 ```bash
-cp -R "$GAME_DIR/savedata" ~/Desktop/uaRO-savedata-backup-"$(date +%Y%m%d)"
+mkdir -p "$HOME/Games/uaRO-savedata-backups"
+BACKUP_DIR="$HOME/Games/uaRO-savedata-backups/$(date +%Y%m%d-%H%M%S)"
+mkdir "$BACKUP_DIR"
+cp -R "$GAME_DIR/savedata" "$BACKUP_DIR/"
+echo "Savedata backup created at $BACKUP_DIR/savedata"
 ```
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
@@ -1379,16 +1448,28 @@ Everything else is safely re-derivable by re-running this skill. **Ask the user 
 | **3 — + Whisky itself** | Level 2 + Whisky.app + the WhiskyWine runtime | Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
 | **4 — + shared infra** | Level 3 + Homebrew + Rosetta | nothing | ⚠️ Only if nothing *else* on this Mac depends on Homebrew/Rosetta — check first, most machines have unrelated tools relying on both |
 
+**Recovery-first deletion rule:** filesystem paths below use `trash`, so the user can recover an accidentally selected target from the Trash. Check that it is available before starting. If it is missing, stop and have the user remove the exact paths in Finder; do not substitute `rm -rf` or another permanent-delete command. `brew uninstall` and `softwareupdate --remove-rosetta` are separate package-manager/system operations at Levels 3–4; re-check their dependency warnings and scope before running them.
+
+```bash
+command -v trash >/dev/null || { echo "The 'trash' command is required for recoverable removal; stop and use Finder if it is unavailable"; exit 1; }
+```
+
 ```bash
 # --- Level 1: game only ---
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
-rm -rf "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" "$GAME_DIR"
-rm -f /opt/homebrew/bin/uaro-cli   # no-op if it was never built
-rm -rf ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # the downloaded/extracted installer itself (Step 2b/6) --
-                                                    # lives OUTSIDE $GAME_DIR as a sibling, not a subfolder,
-                                                    # so it survives the rm -rf above and was silently leaking
-                                                    # ~4.7GB+ per uninstall before this line existed
+for TARGET in \
+  "/Applications/UaRO Patcher.app" \
+  "/Applications/UaRO Settings.app" \
+  "/Applications/UaRO Game.app" \
+  "$GAME_DIR" \
+  "/opt/homebrew/bin/uaro-cli" \
+  "$HOME/Games/UaRO_Setup.zip" \
+  "$HOME/Games/UaRO_Setup"; do
+  [[ -e "$TARGET" ]] && trash "$TARGET"
+done
+# The installer ZIP/extraction directory are siblings of $GAME_DIR, not children;
+# include them in Level 1 so a multi-GB download does not leak after uninstall.
 # Verify: neither app should resolve, and the game dir should be gone
 "$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
 test -d "$GAME_DIR" && echo "still there" || echo "removed"
@@ -1401,8 +1482,12 @@ WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/
 "$WHISKY" list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
 
 # --- Level 3: also remove Whisky.app + the WhiskyWine runtime ---
-rm -rf /Applications/Whisky.app ~/Applications/Whisky.app
-rm -rf ~/Library/Application\ Support/com.isaacmarovitz.Whisky
+for TARGET in \
+  "/Applications/Whisky.app" \
+  "$HOME/Applications/Whisky.app" \
+  "$HOME/Library/Application Support/com.isaacmarovitz.Whisky"; do
+  [[ -e "$TARGET" ]] && trash "$TARGET"
+done
 brew uninstall --cask whisky 2>/dev/null   # no-op if it was sideloaded, not brewed
 command -v whisky || echo "whisky CLI gone"
 

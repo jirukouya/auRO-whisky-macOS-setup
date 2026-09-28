@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-28
+
+### Added
+- Added an evidence-driven execution contract with explicit `fresh`, `adopt`, `verify`, `repair`, and `uninstall` routes, a compact state ledger, and target/execution/behavior completion gates.
+- Added a runtime-route gate: alternate renderer, DLL, sync, or Wine-backend recipes must be tested as isolated diagnostic branches instead of silently replacing the supported DXVK path.
+
+### Fixed
+- Re-running Step 8 or Step 10 no longer overwrites the original `setup.exe`, `dinput.ini`, or `OptionInfo.lua` rollback backups; existing backups are preserved and size-checked before patching.
+- Uninstall now backs up savedata into a timestamped local directory and uses recoverable `trash` removal for app, game, installer, CLI, and Whisky runtime targets instead of permanent recursive deletion.
+- Step 12 now requires independent target, execution, and behavior evidence before the installation can be called complete.
+
 ## [0.20.4] - 2026-09-18
 
 ### Changed
