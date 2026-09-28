@@ -1,164 +1,204 @@
 # uaRO on Apple Silicon, via Whisky
 
-**This repo is one file that installs the uaRO Windows game on your Mac by talking to an AI, not by reading instructions yourself.**
+This repository provides an AI-executable setup skill for running the uaRO
+Windows game on an Apple Silicon Mac through Whisky.
 
-[`SKILL.md`](./SKILL.md) is a self-contained playbook written *for an AI coding agent* (Claude Code, OpenAI Codex, or GitHub Copilot) to read and execute, not for a human to follow by hand. Hand it the file, say "install uaRO," and it drives the whole thing end to end. Curious what that actually involves? Open `SKILL.md` — it's all in there.
+[`SKILL.md`](./SKILL.md) is the main execution playbook. It is written for
+Claude Code, OpenAI Codex, GitHub Copilot, or another AI coding agent that can
+read and operate on the local repository. The other files are supporting
+references for troubleshooting, AzzyAI, and change history.
 
-## New in v0.20.3: AzzyAI is now supported
+## Choose your route
 
-The uaRO installation skill now includes built-in support for **AzzyAI**.
+Start with the prompt that matches the state of the Mac:
 
-AzzyAI is an optional add-on that allows your **mercenary** or **homunculus** to automatically find and attack monsters while you play.
+| Goal | Prompt to give the AI | Primary entry |
+|---|---|---|
+| Fresh install | `Read SKILL.md and install uaRO on this Mac via Whisky. Stop after each step and show the progress table before continuing.` | `SKILL.md` |
+| Existing or partial install | `Read SKILL.md, inspect my existing uaRO Whisky installation, and apply only missing fixes. Do not reinstall working components.` | `SKILL.md` |
+| Verify only | `Run a verify-only check of my existing uaRO Whisky installation. Do not install, rebuild, patch, or delete anything.` | `SKILL.md` |
+| Repair a symptom | `Diagnose my existing uaRO Whisky installation first. Check the current state and identify the failing layer before changing anything.` | `SKILL.md` + `TROUBLESHOOTING.md` |
+| Uninstall | `Read the uninstall section in SKILL.md, show me the exact removal scope and savedata backup plan, then wait before removing anything.` | `SKILL.md` |
+| Install AzzyAI | `Read AZZYAI_FIXES.md and help me install AzzyAI after confirming the core uaRO setup is working.` | `AZZYAI_FIXES.md` |
+| Repair AzzyAI | `Read AZZYAI_FIXES.md. AzzyAI is installed, but my mercenary or homunculus follows without attacking. Check first, then repair only the required files.` | `AZZYAI_FIXES.md` |
 
-When setting up uaRO from scratch, the skill will ask whether you also want to install AzzyAI after the main game installation is complete.
+If you are starting from GitHub, open the repository in the AI coding agent
+or ask it to read the current `SKILL.md` from this repository. The skill is
+designed to stop before human-only actions such as account login, GUI clicks,
+or administrator-password entry.
 
-[See the AzzyAI installation and repair options below.](#updating-an-existing-install-or-adding-azzyai)
+## What this skill solves
 
-## The problem this solves
+uaRO is a Windows-only Ragnarok Online private server protected by Gepard
+Shield 3.0. On Apple Silicon, the practical route documented here is to run
+the x86 Windows client directly through Whisky/Wine instead of putting it
+inside a Windows-on-ARM virtual machine.
 
-[uaRO](https://uaro.net/) (a Ragnarok Online private server) is a Windows-only game protected by **Gepard Shield 3.0** anti-cheat. The obvious approach — run it in a **Windows 11** VM (VMware Fusion) — turned into a dead end:
+The difficult part is not just launching the game. Whisky is discontinued and
+several components fail silently or depend on exact runtime details. The
+playbook handles:
 
-- More virtual CPUs → Gepard threw an error almost immediately.
-- Fewer virtual CPUs → avoided the error, but the game stuttered badly within seconds.
-- Disabling Windows Defender, or whitelisting the game instead → no effect either way.
-- Every Visual C++ Redistributable from 2005 through 2026, x86/x64/ARM → no effect.
-- Every graphics tweak (resolution, texture quality, DirectX version, graphics device, windowed vs. fullscreen) → no effect.
+- Apple Silicon and macOS pre-flight checks.
+- Homebrew, Rosetta 2, Whisky, and the archived WhiskyWine runtime.
+- Bottle creation and configuration.
+- The large, login-gated uaRO installer.
+- Rosetta-compatible FCOM patches for `setup.exe`.
+- Wine Gecko installation for the patcher.
+- Game configuration, keyboard mapping, and launcher creation.
+- Verification, repair, rollback, and optional `uaro-cli` tooling.
+- Optional AzzyAI installation and repair after the core setup.
 
-None of it mattered, because the actual blocker was never performance — it was Gepard Shield not working well with the **Windows 11 on ARM** processor that a VM on Apple Silicon has to run.
+The README stays at the decision and usage level. Exact commands, paths,
+placeholders, and mandatory checks live in [`SKILL.md`](./SKILL.md).
 
-## The fix, and what made it hard
+## What the AI does vs. what you do
 
-**Whisky** (a lightweight macOS Wine wrapper) sidesteps the problem: it translates the game's x86 Windows calls directly on macOS, no ARM Windows kernel involved. But Whisky itself is discontinued and broken in non-obvious ways:
+| The AI can handle | You must handle |
+|---|---|
+| Inspect the Mac, Whisky, bottle, runtime, files, and current state | Log in to your uaRO account |
+| Install and configure public dependencies | Enter a Mac administrator password when macOS asks |
+| Download public archives and build launchers | Click through the Windows installer wizard |
+| Apply reversible configuration and binary patches | Confirm the game reaches the requested in-game state |
+| Run file, runtime, and behavior checks | Decide the final uninstall scope or optional launcher trade-offs |
 
-- Its Homebrew cask and Wine-runtime download endpoint are both dead upstream.
-- A required internal config file has to match an exact schema, or Whisky silently rejects it.
-- iCloud Drive sync can relocate freshly-written files out from under an in-progress install.
-- The game's patcher hard-depends on a Wine component (Gecko) with a one-shot install prompt.
-- The Windows installer crashes under Rosetta unless two specific bytes in it are patched.
+The AI should not ask you to paste passwords, and it should not report success
+only because a command returned exit code 0.
 
-`SKILL.md` is every one of those fixes, plus the verification to catch it if any fails silently again — found by actually running the whole process once, end to end, on a real machine.
+## What counts as success
 
-## How to actually run this
+The current playbook uses three completion gates for the same bottle and game
+directory:
 
-You'll drive this by talking to an AI — through its desktop app, or its command-line tool. **Claude, ChatGPT, and GitHub Copilot can all complete this install** — pick whichever one you already have. No preference? Start with **ChatGPT**.
+| Gate | Evidence |
+|---|---|
+| Target | The intended files, configuration, backups, launcher bundles, and paths read back correctly |
+| Execution | The actual launcher uses the resolved Whisky CLI, bottle, `WINEPREFIX`, DLL overrides, and runtime intended for this install |
+| Behavior | Settings round-trip, the patcher advances beyond `Getting patch_main.txt...`, and the game reaches a stable login or equivalent user-visible result |
 
-**Option A — Desktop app (no Terminal needed):**
-A normal Mac app, like any other — you click around in a window, no typing commands. Good if you've never used Terminal (the black command-line window under Applications → Utilities) before.
+A generated launcher, a manifest, a running process, or a successful command
+alone is not proof that the game is working.
 
-1. Download one of these and sign in:
-   - [Claude](https://claude.com/download)
-   - [ChatGPT](https://chatgpt.com/download)
-   - [GitHub Copilot](https://github.com/features/ai/github-app)
-2. Click the **Code** tab (Claude), **Codex** tab (ChatGPT), or the **+** next to **Sessions** (GitHub Copilot). It'll ask you to pick a folder — just pick your **Documents** folder, it doesn't matter which one for this.
-3. Paste this whole thing into the chat box:
-   ```
-   Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
-   ```
+## Requirements
 
-**Option B — Terminal:**
-A command-line tool (`claude`, `codex`, or `copilot`) that you type into Mac's built-in Terminal app instead of clicking a window. Good if you're already comfortable there.
+- An Apple Silicon Mac (M1 or later).
+- macOS 14 (Sonoma) or newer.
+- Approximately 15–20 GB of free disk space.
+- Xcode Command Line Tools; Homebrew may offer to install them during Step 1.
+- A uaRO account, because the installer download is behind uaRO's login page.
+- Time to perform the human-only installer and first-run checks.
 
-1. **Open Terminal:**
-   - Press **⌘ Cmd + Space**, type `Terminal`, then press **Return** — or
-   - Open **Finder → Applications → Utilities → Terminal**.
+The procedure documents a real end-to-end run on Apple Silicon macOS 26.5.2.
+That is evidence for the documented route, not a guarantee for every future
+macOS release, uaRO installer build, or Gepard Shield update.
 
-   Then use one of these:
-   - [Claude Code](https://claude.com/claude-code) — `claude`. Install it with:
-     ```
-     curl -fsSL https://claude.ai/install.sh | bash
-     ```
-   - [OpenAI Codex CLI](https://github.com/openai/codex) — `codex`. Install it with:
-     ```
-     curl -fsSL https://chatgpt.com/codex/install.sh | sh
-     ```
-   - [GitHub Copilot CLI](https://github.com/features/copilot/cli) — `copilot`. Install it with:
-     ```
-     curl -fsSL https://gh.io/copilot-install | bash
-     ```
-2. **Paste this whole thing:**
-   ```
-   Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and follow it step by step to install uaRO on this Mac. Stop after each step and show me the progress table before continuing.
-   ```
-3. **From there, just answer what it asks.** It'll tell you before anything you need to personally do — logging into the uaRO download page, clicking through the installer wizard, typing your Mac password if macOS asks for it — and it won't move to the next step without checking with you first.
+## How to use it
 
-## Updating an existing install or adding AzzyAI
+### Desktop AI app
 
-Already installed uaRO with this skill before? Open an AI session the same way as above, then choose the option you need below.
+Open the repository in a coding-capable AI app, then use one of the route
+prompts above. The AI will show a progress table and stop at each approval
+checkpoint. You may still need to bring an installer window or Wine dialog to
+the front manually.
 
-### Update the existing uaRO / Whisky installation
+### Terminal AI tool
 
-Use this if uaRO is already installed and you want the AI to check for newer fixes:
+Open a terminal in the repository root and ask the agent to read and follow
+`SKILL.md`. A fresh session can use:
 
-```
-Fetch SKILL.md from https://github.com/jirukouya/auRO-whisky-macOS-setup and check my existing uaRO installation against the latest fixes. Apply only the fixes that are missing.
-```
-
-The skill will detect what's out of date and only touch what's actually missing — it won't reinstall anything that's already working. See [CHANGELOG.md](./CHANGELOG.md) for what's changed release to release.
-
-### Install AzzyAI
-
-Use this if uaRO is already installed and you want your mercenary or homunculus to automatically attack monsters:
-
-```
-Please read and follow this AzzyAI guide step by step:
-
-https://github.com/jirukouya/auRO-whisky-macOS-setup/blob/main/AZZYAI_FIXES.md
-
-I already have uaRO installed. Help me install and configure AzzyAI for my mercenary or homunculus. I am not technical, so explain each step in simple language, make a backup before changing existing files, and stop for my confirmation before continuing.
-```
-
-### Fix AzzyAI
-
-Use this if AzzyAI is already installed, but your mercenary or homunculus follows you without attacking:
-
-```
-Please read and follow this AzzyAI guide:
-
-https://github.com/jirukouya/auRO-whisky-macOS-setup/blob/main/AZZYAI_FIXES.md
-
-AzzyAI is already installed on my uaRO setup, but my mercenary or homunculus follows me without attacking. Check the installation first, then apply the required uaRO targeting fixes. I am not technical, so explain each step simply and stop for my confirmation before continuing.
+```text
+Read SKILL.md from this repository and install uaRO on this Mac via Whisky.
+Use the progress table, stop after each step, and wait for my confirmation.
 ```
 
-The AI will guide you through the steps and will tell you when you need to log in to the game and type `/merai` or `/hoai`.
+Do not ask the agent to run the entire process as one unreviewed command
+chain. The setup changes system state and includes GUI and account steps that
+need a human checkpoint.
 
-## What you'll need
+## Existing installs and AzzyAI
 
-- A Mac with **Apple Silicon** (M1 or later) on **macOS 14 (Sonoma) or newer** — Whisky itself requires both; there's no path through this skill on an Intel Mac. Confirmed working as far up as **macOS 26 (Tahoe)** by a real install — the big jump in Apple's own version numbering (14 → 15 → 26) isn't a compatibility gap, "or newer" genuinely means newer.
-- Roughly **15-20GB of free disk space**.
-- A **uaRO account** — the installer download sits behind a login wall on uaRO's own site, so getting the installer file itself is always a manual, logged-in step no AI can do on your behalf.
+For an existing uaRO install, start with the verify or repair route instead of
+reinstalling. The skill checks the actual bottle, game directory, launcher
+bundles, configuration, and known fixes before deciding what to touch.
+
+AzzyAI is optional and is not part of the core completion gate. Read
+[`AZZYAI_FIXES.md`](./AZZYAI_FIXES.md) only after the core uaRO setup is working.
+It covers both a fresh AzzyAI installation and repair of an existing setup
+where the mercenary or homunculus follows but does not attack.
+
+## Troubleshooting
+
+Use [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) when a mandatory verification
+fails or a known symptom appears. The reference is indexed by category so the
+AI can jump to the relevant issue instead of rereading the entire install
+flow.
+
+Typical routing:
+
+| Symptom | First check |
+|---|---|
+| Patcher stays on `Getting patch_main.txt...` | Gecko installation and patcher behavior verification |
+| `setup.exe` illegal-instruction failure | FCOM target context, backup, and byte-diff verification |
+| Existing install lacks a newer keyboard or launcher fix | `2a. Detect existing state` and the adopt/repair route |
+| Game disconnects or crashes after a known stage | Capture the exact symptom and runtime evidence before changing settings |
+| Launcher opens but the game is not proven usable | Run the execution and behavior gates; do not infer success from the launcher |
+
+## Verification status
+
+The repository distinguishes between what has been tested on a real target
+and what remains environment-dependent:
+
+- The documented route has been exercised on a real Apple Silicon Mac, including
+  runtime setup, bottle configuration, Gecko, FCOM handling, launchers, and
+  first-run checks.
+- Exact behavior can still vary by macOS version, display, uaRO installer build,
+  server-side patches, and the state of an existing bottle.
+- The optional direct Game launcher skips the patcher update check and therefore
+  must not be treated as a permanent replacement for the Patcher launcher.
+- A future installer build may move or add binary patch sites. The skill must
+  verify context and stop when the expected bytes do not match.
+
+When evidence is incomplete, the correct result is an unconfirmed or blocked
+status, not a confident-sounding success message.
 
 ## Uninstalling
 
-Same idea, in reverse: hand the AI this same `SKILL.md` and ask it to uninstall uaRO. Pick how much to undo:
+Ask the AI to show the exact scope before removing anything. The current skill
+backs up `savedata` first and uses recoverable `trash` removal for filesystem
+targets where available. Homebrew and Rosetta removal remain separate
+package-manager/system operations and require an additional dependency check.
 
 | Level | Removes |
 |---|---|
-| 1 | Just the game |
-| 2 | + the Wine bottle |
-| 3 | + Whisky itself |
-| 4 | + shared infra (Homebrew, Rosetta) |
+| 1 | Launcher apps, game files, staged installer files, and optional `uaro-cli` |
+| 2 | Level 1 plus the Whisky bottle |
+| 3 | Level 2 plus Whisky and its WhiskyWine runtime |
+| 4 | Level 3 plus shared Homebrew and Rosetta infrastructure |
 
-## Status
+## Status and changelog
 
-**Public.** These Whisky fixes are useful beyond just uaRO, so this repo's [Releases](../../releases) archive Whisky.app and its Wine runtime in case the upstream sources ever disappear for good.
+**Public.** The repository is maintained as a practical, evidence-driven
+Whisky route for uaRO on Apple Silicon.
 
-## Changelog
-
-Full version history lives in [CHANGELOG.md](./CHANGELOG.md) — check `SKILL.md`'s own frontmatter for the current version number rather than this file, so there's only one place that can go stale instead of two.
+The current version is recorded once in the frontmatter of
+[`SKILL.md`](./SKILL.md). See [`CHANGELOG.md`](./CHANGELOG.md) for the history
+of fixes and documentation changes.
 
 ## Disclaimer
 
-This is unofficial. Run it at your own risk:
+This is unofficial software documentation. Use it at your own risk:
 
-- **No guarantees.** This is a personal project, shared as-is — see [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) for what's already known to be imperfect, including one unresolved crash.
-- **This patches a third-party binary.** The uaRO installer gets a few bytes changed to work around a Rosetta translation bug. A backup is made automatically first, but it's still altering someone else's executable.
-- **Real changes to your Mac.** This installs Homebrew, Rosetta, Whisky, three apps in `/Applications`, and optionally a small `uaro-cli` command-line helper in `/opt/homebrew/bin` — all reversible (see *Uninstalling* above), but not a sandboxed trial run.
-- **No data collection.** Nothing here collects, transmits, or stores your personal data, credentials, or usage. Every login along the way (your Mac's admin password, your uaRO account) is handled directly by you — never by this skill or the AI running it.
+- It is not affiliated with or endorsed by uaRO, Gravity, Whisky, or Apple.
+- It patches a third-party executable to work around a Rosetta translation
+  issue. The playbook creates backups before patching.
+- It installs Homebrew, Rosetta, Whisky, launcher apps, and optionally
+  `uaro-cli`; these are real system changes, not a sandboxed trial.
+- It does not collect or transmit credentials, personal data, or telemetry.
+  Account logins and administrator-password prompts are handled directly by you.
 
 ## Acknowledgments
 
-- **@45rn0d3u5** on the uaRO Discord, who wrote and shared the original [`install-uaro-mac` reference](https://docs.google.com/document/d/1ISi_iijWQuf5AeAh-ITtLYWm-My444x--d7rvQLiaL8/edit?tab=t.0) this skill was built on top of.
-- **[Isaac Marovitz](https://github.com/IsaacMarovitz)**, creator of [Whisky](https://getwhisky.app/), the Wine wrapper this entire install path depends on.
+- **@45rn0d3u5** on the uaRO Discord for the original install reference.
+- **[Isaac Marovitz](https://github.com/IsaacMarovitz)** for creating Whisky.
 
 ## License
 

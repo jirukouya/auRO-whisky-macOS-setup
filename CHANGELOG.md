@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Changed
+- Reworked `README.md` into a route-based front door for fresh installs, existing installs, verify-only checks, repairs, uninstall, and AzzyAI tasks.
+- Removed the stale hardcoded release heading and corrected the repository description to reflect its supporting references.
+- Added the AI-versus-user responsibility boundary, three-gate success summary, evidence-status notes, symptom routing, Xcode Command Line Tools requirement, and safer uninstall explanation.
+
 ## [0.21.0] - 2026-09-28
 
 ### Added
