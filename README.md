@@ -198,6 +198,7 @@ This is unofficial software documentation. Use it at your own risk:
 ## Acknowledgments
 
 - **@45rn0d3u5** on the uaRO Discord for the original install reference.
+- **Rhya** for practical help and troubleshooting support during the uaRO setup.
 - **[Isaac Marovitz](https://github.com/IsaacMarovitz)** for creating Whisky.
 
 ## License
