@@ -106,6 +106,18 @@ Every completion claim must pass three independent gates:
 
 Passing only one gate is `UNCONFIRMED`, not complete. Startup alone is not a behavior test, and a generated launcher or manifest is not live-runtime evidence.
 
+### Verify-only capability boundary (F-01)
+
+When the route is verify, this skill authorizes evidence collection only:
+
+- **Allowed:** read, inspect, query, hash, compare, and non-mutating process inspection.
+- **Not authorized:** write, patch, install, delete, update, apply settings, registry writes, downloads, codesign, registration, automatic repair, or mutable patcher/game launch.
+
+If stronger behavior evidence would require a mutating action, report UNCONFIRMED at that gate. Do not mutate the installation to turn UNCONFIRMED into PASS.
+
+A command denylist is only a regression heuristic. It is not complete capability enforcement; the verify-only route still requires reviewing the actual commands and their observable effects.
+
+
 - **Before answering any "what have we already tried/decided/fixed for this project" question — especially a comparative one, or one about a symptom that might already be a documented issue — read this repo's root `CLAUDE.md` first, then check every source it points to** (commit messages, `CHANGELOG.md`, `TROUBLESHOOTING.md`, and `git notes` — see `CLAUDE.md` for why notes need an explicit `git fetch` to even become visible). Don't answer from whichever one source happens to come to mind first; a past run of this exact skill answered a historical-comparison question from `git log` alone and missed that `CHANGELOG.md` had the closer answer. This applies to *any* agent executing this file, not just one with prior conversation context — that's the whole reason it's written here instead of only remembered.
 - **Probe, don't assume, especially about what's "dead."** The premise "the Homebrew cask is disabled" turned out to be false on one real machine tested — it installed and worked fine. Try the normal path first every time; only fall back to a workaround if the normal path genuinely fails on *this* machine, right now.
 - **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an unconditional `brew install --cask whisky` threw noisy "not permitted" errors against an already-installed app, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
@@ -573,64 +585,164 @@ If it landed somewhere else, **adopt that real path as `GAME_DIR` for every step
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
-**`setup.exe` here is a different file from `UaRO_Setup.exe`, the installer Step 6/7 just downloaded and ran — despite the near-identical name.** `UaRO_Setup.exe` is the Inno Setup installer, already done with its job by this point. `setup.exe` is RO OpenSetup, the game's own graphics-config tool, sitting inside `$GAME_DIR` (installed alongside the game itself, not related to Step 6/7's installer). This step patches that second file, not the first.
+setup.exe here is a different file from UaRO_Setup.exe, the installer Step 6/7 just downloaded and ran, despite the near-identical name. UaRO_Setup.exe is the Inno Setup installer, already done with its job by this point. setup.exe is RO OpenSetup, the game's own graphics-config tool, sitting inside GAME_DIR (installed alongside the game itself, not related to Step 6/7's installer). This step patches that second file, not the first.
 
-Rosetta can't translate certain alternate x87 FCOM instruction encodings; running them crashes `setup.exe` with "Unhandled illegal instruction." Both sites are context-checked before writing, so a build that doesn't need a given site skips it safely.
+Rosetta cannot translate certain alternate x87 FCOM instruction encodings; running them crashes setup.exe with an illegal-instruction error. The procedure below is fail-closed:
+
+```text
+READ BOTH PATCH SITES → CLASSIFY BOTH → validate the pair
+UNKNOWN / MIXED / TRUNCATED → ZERO WRITE → ABORT
+BOTH PATCHED → NO-OP
+BOTH EXPECTED UNPATCHED → validate/create backup → patch both → read back → verify exact bytes and exact diff
+```
+
+Known states:
+
+- Site A at 0x2C0CD: unpatched dc; patched d8.
+- Site B at 0x21E39: unpatched dcd8dfe0; patched ddd8b440.
+
+Both sites are read and classified before backup creation or target modification. The checks are byte comparisons performed by Python; they do not rely on a human visually inspecting xxd.
 
 ```bash
 SETUP="$GAME_DIR/setup.exe"
-if [[ -e "$SETUP.orig-backup" ]]; then
-  [[ "$(stat -f%z "$SETUP")" == "$(stat -f%z "$SETUP.orig-backup")" ]] \
-    || { echo "Existing setup.exe backup has a different size — stop and inspect it before patching"; exit 1; }
-  echo "Preserving existing original backup: $SETUP.orig-backup"
-else
-  cp "$SETUP" "$SETUP.orig-backup"
-  echo "Created original backup: $SETUP.orig-backup"
-fi
-chmod u+w "$SETUP"
-```
+BACKUP="$SETUP.orig-backup"
 
-**`$SETUP` is reused bare in both later code blocks below (the `dd`/Python patch and the mandatory byte-diff verification) — re-derive it (`SETUP="$GAME_DIR/setup.exe"`) at the top of each, the same standing rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` (see the callout after the Parameters table).** Since it's a deterministic one-liner from `$GAME_DIR`, not a decision that needs remembering, always re-deriving is a harmless no-op even when it happens to already be correct.
+python3 - "$SETUP" "$BACKUP" <<'PYEOF'
+from pathlib import Path
+import shutil
+import sys
 
-**Site A — 1 byte @ `0x2C0CD`, `dc`→`d8`.** Context window is 4 bytes *before* the patched byte, the byte itself, then 3 bytes after (`dc442410 dc d0dfe0`, patched byte in the middle) — reading 8 bytes forward *starting at* the offset will not match and looks like a false "uncatalogued build."
+setup = Path(sys.argv[1])
+backup = Path(sys.argv[2])
 
-**Site B — 4 bytes @ `0x21E39`, `dcd8dfe0`→`ddd8b440`.** Context here *does* start exactly at the patch offset — the two sites use different alignment conventions, don't unify them.
+SITE_A_OFFSET = 0x2C0CD
+SITE_B_OFFSET = 0x21E39
+A_UNPATCHED = bytes.fromhex("dc")
+A_PATCHED = bytes.fromhex("d8")
+B_UNPATCHED = bytes.fromhex("dcd8dfe0")
+B_PATCHED = bytes.fromhex("ddd8b440")
 
-Preferred method — plain `dd` (fine for normal unrestricted shells):
+def read_site(data, offset, size):
+    value = data[offset:offset + size]
+    return value if len(value) == size else None
 
-```bash
-SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
-xxd -s $((0x2C0C9)) -l 8 "$SETUP"     # confirm context reads dc442410dcd0dfe0 before patching
-printf '\xd8' | dd of="$SETUP" bs=1 seek=$((0x2C0CD)) count=1 conv=notrunc
+def abort(message):
+    print(message)
+    raise SystemExit(1)
 
-xxd -s $((0x21E39)) -l 4 "$SETUP"     # confirm context reads dcd8dfe0 before patching
-printf '\xdd\xd8\xb4\x40' | dd of="$SETUP" bs=1 seek=$((0x21E39)) count=4 conv=notrunc
-```
+if not setup.is_file():
+    abort(f"setup.exe is missing: {setup}")
 
-**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results. **`<GAME_DIR>` here is a placeholder, not a live shell variable — substitute the real resolved path before running this.** The `cat > ... <<'PYEOF'` wrapper below is what actually creates and runs the file — same pattern as Step 10's Python patch script, not just an illustrative snippet:
+try:
+    original = setup.read_bytes()
+except OSError as exc:
+    abort(f"Cannot read setup.exe: {exc}")
 
-```bash
-cat > /tmp/patch_setup_exe.py <<'PYEOF'
-path = "<GAME_DIR>/setup.exe"
-with open(path, "r+b") as f:
-    f.seek(0x2C0CD); assert f.read(1) == b'\xdc'; f.seek(0x2C0CD); f.write(b'\xd8')
-    f.seek(0x21E39); assert f.read(4) == bytes.fromhex("dcd8dfe0"); f.seek(0x21E39); f.write(bytes.fromhex("ddd8b440"))
-print("done")
+site_a = read_site(original, SITE_A_OFFSET, len(A_UNPATCHED))
+site_b = read_site(original, SITE_B_OFFSET, len(B_UNPATCHED))
+
+if site_a == A_UNPATCHED:
+    state_a = "unpatched"
+elif site_a == A_PATCHED:
+    state_a = "patched"
+else:
+    state_a = "unknown"
+
+if site_b == B_UNPATCHED:
+    state_b = "unpatched"
+elif site_b == B_PATCHED:
+    state_b = "patched"
+else:
+    state_b = "unknown"
+
+if state_a == "unknown" or state_b == "unknown":
+    abort(
+        "Unknown, mixed, or truncated FCOM context "
+        f"(Site A={site_a.hex() if site_a is not None else 'truncated'}, "
+        f"Site B={site_b.hex() if site_b is not None else 'truncated'}); "
+        "aborting with zero writes and no backup creation"
+    )
+
+if state_a != state_b:
+    abort(
+        f"Mixed FCOM state (Site A={state_a}, Site B={state_b}); "
+        "aborting with zero writes and no backup creation"
+    )
+
+if state_a == "patched":
+    print("Both FCOM sites are already patched; no-op")
+    raise SystemExit(0)
+
+if backup.exists():
+    try:
+        backup_bytes = backup.read_bytes()
+    except OSError as exc:
+        abort(f"Cannot read existing original backup: {exc}")
+    if len(backup_bytes) != len(original):
+        abort("Existing setup.exe backup has a different size; aborting before any write")
+    if read_site(backup_bytes, SITE_A_OFFSET, len(A_UNPATCHED)) != A_UNPATCHED:
+        abort("Existing setup.exe backup does not contain the unpatched Site A bytes")
+    if read_site(backup_bytes, SITE_B_OFFSET, len(B_UNPATCHED)) != B_UNPATCHED:
+        abort("Existing setup.exe backup does not contain the unpatched Site B bytes")
+    print(f"Preserving existing original backup: {backup}")
+else:
+    try:
+        shutil.copy2(setup, backup)
+    except OSError as exc:
+        abort(f"Cannot create original setup.exe backup: {exc}")
+    print(f"Created original setup.exe backup: {backup}")
+
+try:
+    setup.chmod(setup.stat().st_mode | 0o200)
+except OSError as exc:
+    abort(f"Cannot make setup.exe writable after validation: {exc}")
+
+patched = bytearray(original)
+patched[SITE_A_OFFSET:SITE_A_OFFSET + 1] = A_PATCHED
+patched[SITE_B_OFFSET:SITE_B_OFFSET + 4] = B_PATCHED
+
+try:
+    setup.write_bytes(patched)
+    final = setup.read_bytes()
+except OSError as exc:
+    abort(f"FCOM patch write/read-back failed: {exc}")
+
+if read_site(final, SITE_A_OFFSET, 1) != A_PATCHED:
+    abort("Site A final bytes are not exactly d8")
+if read_site(final, SITE_B_OFFSET, 4) != B_PATCHED:
+    abort("Site B final bytes are not exactly ddd8b440")
+if len(final) != len(original):
+    abort("FCOM patch changed setup.exe size")
+
+expected = bytearray(original)
+expected[SITE_A_OFFSET:SITE_A_OFFSET + 1] = A_PATCHED
+expected[SITE_B_OFFSET:SITE_B_OFFSET + 4] = B_PATCHED
+if final != bytes(expected):
+    abort("FCOM patch changed bytes outside the two approved sites")
+
+changed_offsets = {
+    index for index, (before, after) in enumerate(zip(original, final))
+    if before != after
+}
+expected_offsets = {
+    SITE_A_OFFSET,
+    SITE_B_OFFSET,
+    SITE_B_OFFSET + 2,
+    SITE_B_OFFSET + 3,
+}
+if changed_offsets != expected_offsets:
+    abort(
+        "FCOM byte diff is not exact: "
+        f"expected {sorted(expected_offsets)}, got {sorted(changed_offsets)}"
+    )
+
+print("FCOM patch applied and verified: exact final bytes and expected diff")
 PYEOF
-python3 /tmp/patch_setup_exe.py
 ```
 
-**MANDATORY verification — byte-diff against the backup, don't just trust the write succeeded:**
+If either site is unknown, truncated, or disagrees with the other site, stop. Do not create or replace the backup and do not modify setup.exe. If both sites are already patched, the command exits cleanly without creating a backup. If both are unpatched, the original backup is preserved and validated before the two writes occur.
 
-```bash
-SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
-cmp -l "$SETUP.orig-backup" "$SETUP" | awk '{printf "offset(dec)=%d 0x%X\n", $1-1, $1-1}'
-# Expect exactly: 0x2C0CD, and within 0x21E39-0x21E3C (3 of the 4 bytes actually differ — the
-# 2nd byte of Site B, 0xd8, is unchanged between pre/post). Nothing else should be listed.
-ls -la "$SETUP" "$SETUP.orig-backup"   # sizes must match exactly
-```
-
-**If setup.exe crashes at a different `0042xxxx` address:** subtract the PE ImageBase `0x400000` to get the file offset. `0x0042C0CD` → Site A, `0x00421E39` → Site B. Any other address is an uncatalogued third site from a newer installer build — dump 16 bytes around it (`xxd -s $((0xOFFSET - 8)) -l 16 setup.exe`) and treat it as a new finding, don't assume the two offsets above are permanent across future uaRO releases.
+If setup.exe crashes at a different 0042xxxx address, subtract the PE ImageBase 0x400000 to get the file offset. 0x0042C0CD maps to Site A and 0x00421E39 maps to Site B. Any other address is an uncatalogued third site from a newer installer build; dump the surrounding bytes and stop rather than changing these approved historical values.
 
 ## Phase C — Client readiness (Steps 9–9b–10)
 
@@ -1209,12 +1321,25 @@ cmd_repair() {
         issues+=("Bottle '$BOTTLE_NAME' missing -- recreate it via Step 5")
     fi
 
-    local any=0
+    local required=0
     local exe_name
     for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+        case "$APP" in
+            "UaRO Patcher.app"|"UaRO Settings.app") required=1 ;;
+            "UaRO Game.app") required=0 ;;
+        esac
+
         local bundle="/Applications/$APP"
-        [[ -d "$bundle" ]] || { echo "-- $APP -- [--] not installed, skipping"; continue; }
-        any=1
+        if [[ ! -d "$bundle" ]]; then
+            if [[ $required -eq 1 ]]; then
+                echo "[WARN] Required launcher missing: $APP"
+                problems=$((problems + 1))
+                issues+=("$APP: required launcher is missing -- rebuild via Step 11")
+            else
+                echo "-- $APP -- [--] optional launcher not installed, skipping"
+            fi
+            continue
+        fi
         echo "-- $APP --"
 
         local plist="$bundle/Contents/Info.plist"
@@ -1284,10 +1409,7 @@ cmd_repair() {
     done
 
     echo "----------------------------------"
-    if [[ $any -eq 0 ]]; then
-        echo "No launcher apps found in /Applications -- nothing to check."
-        exit 0
-    fi
+    # Required launcher absence is accumulated above; the final problems decision is authoritative.
 
     if [[ $problems -eq 0 ]]; then
         echo "All checks passed."
@@ -1367,6 +1489,18 @@ Do not call the installation complete until all three gates below pass for the s
 
 If only the target files pass, report `UNCONFIRMED`; a running process without readable runtime evidence is also `UNCONFIRMED`. If a gate cannot be tested because the user has not clicked through a GUI or logged in, stop at that gate instead of inferring success from the earlier steps.
 
+### Execution-evidence procedure (F-03)
+
+Keep the three gates separate. Record two different claims:
+
+- **What the launcher says:** the literal bottle, game directory, runtime, WINEPREFIX, DLL overrides, and shell environment written into the launcher or manifest.
+- **What actually executed:** independent readback of the resolved Whisky CLI, the runtime executable, WINEPREFIX, relevant environment, and (only when already safely observable) the live process executable and arguments.
+
+Static/readback evidence may inspect the bottle literal, game directory, unresolved placeholders, Whisky CLI resolution, DLL overrides, shellenv, WINEPREFIX, the runtime executable, and wine64 --version. Do not launch a process merely to obtain evidence. If live execution cannot be independently proven, record EXECUTION = UNCONFIRMED.
+
+Target = PASS does not imply Execution = PASS. Behavior = PASS does not imply Execution = PASS; a behavior claim cannot fill an execution-evidence gap.
+
+
 1. Open `UaRO Settings.app`. Confirm it runs the FCOM re-patch without error, then opens "RO OpenSetup" with no crash. In its Resolution dropdown, pick the closest same-aspect-ratio entry to what the user actually wants (there is no guarantee the exact requested pixel value is offered). Click **Apply**, then **OK**.
 2. Confirm the round-trip: `grep -E "WIDTH|HEIGHT|OLD_WIDTH|OLD_HEIGHT" "$GAME_DIR/savedata/OptionInfo.lua"` should now show the GUI's chosen values in `WIDTH`/`HEIGHT` and the previous values preserved in `OLD_WIDTH`/`OLD_HEIGHT`.
 3. Open `UaRO Patcher.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
@@ -1429,15 +1563,104 @@ Would you like to install AzzyAI now? **Yes / No**
 > BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
 > ```
 
-**Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen. Use a new local backup directory outside the game folder so the backup survives the uninstall:
+**Non-regenerable: GAME_DIR/savedata/** (save data, character settings). Every deletion level must pass the same external-backup gate immediately before deletion. The backup destination must be outside GAME_DIR, not merely outside GAME_DIR/savedata.
+
+The source policy distinguishes a missing path from an existing empty directory. Missing, unreadable, non-directory, destination-inside-game, existing-destination, copy, read-back, or comparison failures block deletion.
 
 ```bash
-mkdir -p "$HOME/Games/uaRO-savedata-backups"
-BACKUP_DIR="$HOME/Games/uaRO-savedata-backups/$(date +%Y%m%d-%H%M%S)"
+GAME_DIR="${GAME_DIR:?Resolve the real game directory before continuing}"
+SOURCE="$GAME_DIR/savedata"
+BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Games/uaRO-savedata-backups}"
+
+if [[ ! -e "$SOURCE" ]]; then
+  echo "Savedata source is missing: $SOURCE -- block deletion"
+  exit 1
+fi
+if [[ ! -d "$SOURCE" ]]; then
+  echo "Savedata source is not a directory: $SOURCE -- block deletion"
+  exit 1
+fi
+if [[ ! -r "$SOURCE" ]]; then
+  echo "Savedata source is not readable: $SOURCE -- block deletion"
+  exit 1
+fi
+
+GAME_DIR_REAL="$(python3 - "$GAME_DIR" <<'PYEOF'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+BACKUP_ROOT_REAL="$(python3 - "$BACKUP_ROOT" <<'PYEOF'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+case "$BACKUP_ROOT_REAL/" in
+  "$GAME_DIR_REAL/"*)
+    echo "Backup root is inside GAME_DIR -- block deletion"
+    exit 1
+    ;;
+esac
+
+if [[ -z "$(find "$SOURCE" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+  echo "Savedata exists but is empty; preserving the empty directory"
+else
+  echo "Savedata source exists and contains data"
+fi
+
+mkdir -p "$BACKUP_ROOT"
+
+if [[ -n "${BACKUP_DIR:-}" ]]; then
+  case "$BACKUP_DIR" in
+    /*) ;;
+    *) BACKUP_DIR="$BACKUP_ROOT/$BACKUP_DIR" ;;
+  esac
+else
+  BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$"
+  while [[ -e "$BACKUP_DIR" ]]; do
+    BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
+  done
+fi
+
+BACKUP_DIR_REAL="$(python3 - "$BACKUP_DIR" <<'PYEOF'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+case "$BACKUP_DIR_REAL/" in
+  "$GAME_DIR_REAL/"*)
+    echo "Backup destination is inside GAME_DIR -- block deletion"
+    exit 1
+    ;;
+esac
+if [[ -e "$BACKUP_DIR" ]]; then
+  echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR"
+  exit 1
+fi
+
 mkdir "$BACKUP_DIR"
-cp -R "$GAME_DIR/savedata" "$BACKUP_DIR/"
-echo "Savedata backup created at $BACKUP_DIR/savedata"
+if ! cp -R "$SOURCE" "$BACKUP_DIR/savedata"; then
+  echo "Savedata copy command failed -- block deletion"
+  exit 1
+fi
+
+if [[ ! -d "$BACKUP_DIR/savedata" ]]; then
+  echo "Backup destination was not created as a directory -- block deletion"
+  exit 1
+fi
+if ! diff -qr "$SOURCE" "$BACKUP_DIR/savedata" >/dev/null; then
+  echo "Independent source/destination comparison failed -- block deletion"
+  exit 1
+fi
+
+SAVEDATA_BACKUP_VERIFIED=1
+echo "Savedata backup independently verified at $BACKUP_DIR/savedata"
 ```
+
+SAVEDATA_BACKUP_VERIFIED=1 is set only after the copy command succeeds, the destination exists, and diff -qr independently compares source and destination. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 
@@ -1456,6 +1679,10 @@ command -v trash >/dev/null || { echo "The 'trash' command is required for recov
 
 ```bash
 # --- Level 1: game only ---
+if [[ "${SAVEDATA_BACKUP_VERIFIED:-0}" != 1 ]]; then
+  echo "Verified savedata backup is required in this same shell before deletion"
+  exit 1
+fi
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 for TARGET in \
