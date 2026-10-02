@@ -112,7 +112,16 @@ def check_fcom(target_path: str | Path) -> Dict[str, object]:
 
 
 def _blocked(result: Dict[str, object], reason: str) -> Dict[str, object]:
-    result.update({"result": "blocked", "reason": reason, "verification": "not-run"})
+    result.update(
+        {
+            "result": "blocked",
+            "reason": reason,
+            "verification": "not-run",
+        }
+    )
+    result.setdefault("state", "UNKNOWN")
+    result.setdefault("pre_state", "UNKNOWN")
+    result.setdefault("post_state", "UNKNOWN")
     return result
 
 
@@ -126,77 +135,229 @@ def _validate_backup(backup_bytes: bytes, original: bytes) -> Optional[str]:
     return None
 
 
-def apply_fcom(target_path: str | Path) -> Dict[str, object]:
-    """Apply the approved two-site transaction to an explicit target."""
+def _fd_identity(fd: int) -> Tuple[int, int]:
+    metadata = os.fstat(fd)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _path_identity(target: Path) -> Tuple[int, int]:
+    metadata = target.stat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def _read_fd(fd: int) -> bytes:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _precondition_error(
+    target: Path,
+    fd: int,
+    expected_identity: Tuple[int, int],
+    expected_bytes: bytes,
+) -> Optional[str]:
+    try:
+        if _fd_identity(fd) != expected_identity or _path_identity(target) != expected_identity:
+            return "TARGET_REPLACED: setup.exe identity changed during validation"
+        current = _read_fd(fd)
+    except OSError as exc:
+        return f"TARGET_CHANGED: cannot revalidate setup.exe before mutation: {exc}"
+    if current != expected_bytes:
+        return "TARGET_CHANGED: setup.exe bytes changed after initial classification"
+    return None
+
+
+def _create_backup_from_snapshot(backup: Path, original: bytes) -> None:
+    with backup.open("xb") as stream:
+        stream.write(original)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _open_writable_target(target: Path, expected_identity: Tuple[int, int]) -> int:
+    try:
+        fd = os.open(target, os.O_RDWR)
+    except OSError:
+        try:
+            metadata = target.stat()
+            if (metadata.st_dev, metadata.st_ino) != expected_identity:
+                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed before write access")
+            os.chmod(target, metadata.st_mode | stat.S_IWUSR)
+            fd = os.open(target, os.O_RDWR)
+        except RuntimeError:
+            raise
+        except OSError as exc:
+            raise OSError(f"cannot open setup.exe for mutation: {exc}") from exc
+
+    try:
+        if _fd_identity(fd) != expected_identity or _path_identity(target) != expected_identity:
+            raise RuntimeError("TARGET_REPLACED: setup.exe identity changed before mutation")
+        os.fchmod(fd, os.fstat(fd).st_mode | stat.S_IWUSR)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _write_fd(fd: int, data: bytes) -> None:
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
+    written = 0
+    while written < len(data):
+        written += os.write(fd, data[written:])
+    os.fsync(fd)
+
+
+def apply_fcom(
+    target_path: str | Path,
+    before_mutation_hook: Optional[Callable[[], None]] = None,
+) -> Dict[str, object]:
+    """Apply the approved two-site transaction to an explicit target.
+
+    The optional hook is an internal deterministic test seam. It runs after
+    backup validation/creation and before the final precondition check; the CLI
+    never exposes or uses it.
+    """
 
     target = Path(target_path)
-    result, original = _read_and_classify(target, "fcom-apply")
-    if original is None:
-        return result
+    result = _target_record(target, "fcom-apply")
+    read_fd: Optional[int] = None
+    write_fd: Optional[int] = None
+    try:
+        try:
+            read_fd = os.open(target, os.O_RDONLY)
+            expected_identity = _fd_identity(read_fd)
+            original = _read_fd(read_fd)
+            if _path_identity(target) != expected_identity:
+                return _blocked(result, "TARGET_REPLACED: setup.exe identity changed during classification")
+        except OSError as exc:
+            result.update(
+                {
+                    "site_a": "unavailable",
+                    "site_b": "unavailable",
+                    "state": "UNKNOWN",
+                    "pre_state": "UNKNOWN",
+                    "post_state": "UNKNOWN",
+                    "result": "blocked",
+                    "reason": f"cannot read target: {exc}",
+                }
+            )
+            return result
 
-    state = result["state"]
-    if state != "UNPATCHED":
+        site_a = _site_state(original, SITE_A_OFFSET, A_UNPATCHED, A_PATCHED)
+        site_b = _site_state(original, SITE_B_OFFSET, B_UNPATCHED, B_PATCHED)
+        state = _whole_state(site_a, site_b)
+        result.update(
+            {
+                "site_a": site_a,
+                "site_b": site_b,
+                "state": state,
+                "pre_state": state,
+                "post_state": state,
+            }
+        )
+
         if state == "PATCHED":
             result.update({"result": "success", "reason": "already patched; no-op"})
             return result
-        return _blocked(result, f"FCOM state {state} is not patchable")
+        if state != "UNPATCHED":
+            return _blocked(result, f"FCOM state {state} is not patchable")
 
-    backup = target.with_name(target.name + ".orig-backup")
-    try:
-        if backup.exists():
-            backup_bytes = backup.read_bytes()
-            backup_error = _validate_backup(backup_bytes, original)
-            if backup_error:
-                return _blocked(result, backup_error)
-        else:
-            shutil.copy2(target, backup)
-            result["backup_created"] = True
-            backup_bytes = backup.read_bytes()
-            if backup_bytes != original:
-                return _blocked(result, "new original backup does not exactly match target")
-    except OSError as exc:
-        return _blocked(result, f"cannot validate/create original backup: {exc}")
+        backup = target.with_name(target.name + ".orig-backup")
+        try:
+            if backup.exists():
+                backup_bytes = backup.read_bytes()
+                backup_error = _validate_backup(backup_bytes, original)
+                if backup_error:
+                    return _blocked(result, backup_error)
+            else:
+                _create_backup_from_snapshot(backup, original)
+                result["backup_created"] = True
+                backup_bytes = backup.read_bytes()
+                if backup_bytes != original:
+                    return _blocked(result, "new original backup does not exactly match target")
+        except OSError as exc:
+            return _blocked(result, f"cannot validate/create original backup: {exc}")
 
-    try:
-        target.chmod(target.stat().st_mode | stat.S_IWUSR)
-        result["mutation"] = True
+        if before_mutation_hook is not None:
+            try:
+                before_mutation_hook()
+            except Exception as exc:
+                return _blocked(result, f"TARGET_CHANGED: pre-mutation hook failed: {exc}")
+
+        reason = _precondition_error(target, read_fd, expected_identity, original)
+        if reason:
+            return _blocked(result, reason)
+
+        try:
+            write_fd = _open_writable_target(target, expected_identity)
+        except RuntimeError as exc:
+            return _blocked(result, str(exc))
+        except OSError as exc:
+            return _blocked(result, str(exc))
+
+        reason = _precondition_error(target, write_fd, expected_identity, original)
+        if reason:
+            return _blocked(result, reason)
+
         patched = bytearray(original)
         patched[SITE_A_OFFSET : SITE_A_OFFSET + 1] = A_PATCHED
         patched[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
-        target.write_bytes(patched)
-        final = target.read_bytes()
-    except OSError as exc:
-        return _blocked(result, f"FCOM patch write/read-back failed: {exc}")
 
-    if _site_state(final, SITE_A_OFFSET, A_UNPATCHED, A_PATCHED) != "patched":
-        return _blocked(result, "Site A final bytes are not patched")
-    if _site_state(final, SITE_B_OFFSET, B_UNPATCHED, B_PATCHED) != "patched":
-        return _blocked(result, "Site B final bytes are not patched")
-    if len(final) != len(original):
-        return _blocked(result, "FCOM patch changed target size")
+        try:
+            _write_fd(write_fd, bytes(patched))
+            result["mutation"] = True
+            final = _read_fd(write_fd)
+        except OSError as exc:
+            result["mutation"] = True
+            return _blocked(result, f"FCOM patch write/read-back failed: {exc}")
 
-    expected = bytearray(original)
-    expected[SITE_A_OFFSET : SITE_A_OFFSET + 1] = A_PATCHED
-    expected[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
-    if final != bytes(expected):
-        return _blocked(result, "FCOM patch changed bytes outside approved sites")
+        try:
+            if _fd_identity(write_fd) != expected_identity or _path_identity(target) != expected_identity:
+                return _blocked(result, "TARGET_REPLACED: setup.exe identity changed during mutation")
+        except OSError as exc:
+            return _blocked(result, f"TARGET_CHANGED: cannot verify setup.exe identity after mutation: {exc}")
+        if final != bytes(patched):
+            return _blocked(result, "TARGET_CHANGED: setup.exe changed during mutation")
 
-    changed_offsets = {
-        index for index, (before, after) in enumerate(zip(original, final)) if before != after
-    }
-    if changed_offsets != EXPECTED_CHANGED_OFFSETS:
-        return _blocked(result, "FCOM patch diff is not exactly the approved byte set")
+        if _site_state(final, SITE_A_OFFSET, A_UNPATCHED, A_PATCHED) != "patched":
+            return _blocked(result, "Site A final bytes are not patched")
+        if _site_state(final, SITE_B_OFFSET, B_UNPATCHED, B_PATCHED) != "patched":
+            return _blocked(result, "Site B final bytes are not patched")
+        if len(final) != len(original):
+            return _blocked(result, "FCOM patch changed target size")
 
-    result.update(
-        {
-            "post_state": "PATCHED",
-            "result": "success",
-            "reason": "patched and verified",
-            "verification": "passed",
+        expected = bytearray(original)
+        expected[SITE_A_OFFSET : SITE_A_OFFSET + 1] = A_PATCHED
+        expected[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
+        if final != bytes(expected):
+            return _blocked(result, "FCOM patch changed bytes outside approved sites")
+
+        changed_offsets = {
+            index for index, (before, after) in enumerate(zip(original, final)) if before != after
         }
-    )
-    return result
+        if changed_offsets != EXPECTED_CHANGED_OFFSETS:
+            return _blocked(result, "FCOM patch diff is not exactly the approved byte set")
 
+        result.update(
+            {
+                "post_state": "PATCHED",
+                "result": "success",
+                "reason": "patched and verified",
+                "verification": "passed",
+            }
+        )
+        return result
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
+        if read_fd is not None:
+            os.close(read_fd)
 
 def _snapshot_tree(root: Path) -> Dict[str, Tuple[str, int, str]]:
     """Return a deterministic tree snapshot, rejecting unsupported entries."""

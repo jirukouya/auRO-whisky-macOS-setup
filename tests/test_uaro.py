@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -153,6 +154,131 @@ class FcomSpikeTests(unittest.TestCase):
         result = uaro.apply_fcom(target)
         self.assertEqual(result["result"], "success")
         self.assertFalse(result["backup_created"])
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_replacement_after_classification_is_blocked_and_unpatched_replacement_is_untouched(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        replacement = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-unpatched"
+        replacement_path.write_bytes(replacement)
+        backup = self.backup_for(target)
+        original_identity = (target.stat().st_dev, target.stat().st_ino)
+        original_handle = target.open("rb")
+        hook_state: dict[str, tuple[int, int]] = {}
+
+        def replace_target() -> None:
+            replacement_path.replace(target)
+            replacement_stat = target.stat()
+            old_stat = os.fstat(original_handle.fileno())
+            hook_state["replacement_identity"] = (replacement_stat.st_dev, replacement_stat.st_ino)
+            hook_state["old_identity"] = (old_stat.st_dev, old_stat.st_ino)
+
+        try:
+            result = uaro.apply_fcom(target, before_mutation_hook=replace_target)
+        finally:
+            original_handle.close()
+
+        self.assertEqual(hook_state["old_identity"], original_identity)
+        self.assertNotEqual(hook_state["old_identity"], hook_state["replacement_identity"])
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_REPLACED", result["reason"])
+        self.assertNotEqual(result["post_state"], "PATCHED")
+        self.assertFalse(result["mutation"])
+        self.assertNotEqual(result["verification"], "passed")
+        self.assertEqual(target.read_bytes(), replacement)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_replacement_with_unknown_content_is_blocked_and_untouched(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        replacement_data = bytearray(original)
+        replacement_data[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1] = b"\x00"
+        replacement = bytes(replacement_data)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-unknown"
+        replacement_path.write_bytes(replacement)
+        self.assertEqual(uaro.check_fcom(replacement_path)["state"], "UNKNOWN")
+        backup = self.backup_for(target)
+
+        def replace_target() -> None:
+            replacement_path.replace(target)
+
+        result = uaro.apply_fcom(target, before_mutation_hook=replace_target)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_REPLACED", result["reason"])
+        self.assertNotEqual(result["post_state"], "PATCHED")
+        self.assertFalse(result["mutation"])
+        self.assertNotEqual(result["verification"], "passed")
+        self.assertEqual(target.read_bytes(), replacement)
+        self.assertNotEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], uaro.A_PATCHED)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_replacement_with_patched_file_is_not_attributed_to_this_transaction(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        replacement = fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-patched"
+        replacement_path.write_bytes(replacement)
+        backup = self.backup_for(target)
+
+        def replace_target() -> None:
+            replacement_path.replace(target)
+
+        result = uaro.apply_fcom(target, before_mutation_hook=replace_target)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_REPLACED", result["reason"])
+        self.assertNotEqual(result["post_state"], "PATCHED")
+        self.assertFalse(result["mutation"])
+        self.assertNotEqual(result["verification"], "passed")
+        self.assertEqual(target.read_bytes(), replacement)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_same_inode_change_after_backup_is_blocked_and_backup_is_preserved(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+
+        def change_target() -> None:
+            self.assertTrue(backup.exists())
+            self.assertEqual(backup.read_bytes(), original)
+            with target.open("r+b") as stream:
+                stream.seek(0)
+                stream.write(b"\xff")
+                stream.flush()
+
+        result = uaro.apply_fcom(target, before_mutation_hook=change_target)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_CHANGED", result["reason"])
+        self.assertNotEqual(result["post_state"], "PATCHED")
+        self.assertFalse(result["mutation"])
+        self.assertEqual(backup.read_bytes(), original)
+        self.assertEqual(target.read_bytes()[0], 0xFF)
+
+    def test_same_inode_fcom_site_change_is_blocked_without_stale_overwrite(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        original_identity = (target.stat().st_dev, target.stat().st_ino)
+        hook_state: dict[str, object] = {}
+
+        def change_fcom_site() -> None:
+            with target.open("r+b") as stream:
+                stream.seek(uaro.SITE_A_OFFSET)
+                stream.write(b"\x00")
+                stream.flush()
+            current_stat = target.stat()
+            hook_state["identity"] = (current_stat.st_dev, current_stat.st_ino)
+            hook_state["site_a"] = target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1]
+
+        result = uaro.apply_fcom(target, before_mutation_hook=change_fcom_site)
+        self.assertEqual(hook_state["identity"], original_identity)
+        self.assertEqual(hook_state["site_a"], b"\x00")
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_CHANGED", result["reason"])
+        self.assertNotEqual(result["post_state"], "PATCHED")
+        self.assertFalse(result["mutation"])
+        self.assertNotEqual(result["verification"], "passed")
+        self.assertEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], b"\x00")
         self.assertEqual(backup.read_bytes(), original)
 
     def test_cli_check_emits_json_and_apply_has_stable_exit(self) -> None:
