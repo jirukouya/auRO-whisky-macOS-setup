@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Portable Phase 2A regression harness.
 
-The FCOM and savedata cases execute the shell/Python procedures extracted from
-SKILL.md against temporary fixtures. The uaro-cli cases execute the embedded
-repair function with temporary app bundles and command stubs. No real
-Whisky, Wine, uaRO, /Applications, or deletion command is used.
+The read-only FCOM and structural-inspection cases route through the
+production deterministic executor invoked by the procedures extracted from
+SKILL.md. The savedata case still exercises the documented shell transaction;
+the uaro-cli cases execute the embedded repair function with temporary app
+bundles and command stubs. No real Whisky, Wine, uaRO, /Applications, or
+deletion command is used.
 """
 
 from __future__ import annotations
@@ -23,13 +25,13 @@ from typing import Dict, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "SKILL.md"
+EXPECTED_ORIGIN = "https://github.com/jirukouya/auRO-whisky-macOS-setup.git"
 A_OFFSET = 0x2C0CD
 B_OFFSET = 0x21E39
 A_UNPATCHED = bytes.fromhex("dc")
 A_PATCHED = bytes.fromhex("d8")
 B_UNPATCHED = bytes.fromhex("dcd8dfe0")
 B_PATCHED = bytes.fromhex("ddd8b440")
-EXPECTED_CHANGED = {A_OFFSET, B_OFFSET, B_OFFSET + 2, B_OFFSET + 3}
 
 
 class SkipCase(Exception):
@@ -58,11 +60,42 @@ def fenced_after(text: str, language: str) -> str:
     return text[start:end]
 
 
-def step8_block() -> str:
+def step8_section() -> str:
     text = skill_text()
     start = text.index("## Step 8 — Patch setup.exe")
     end = text.index("## Phase C — Client readiness", start)
-    return fenced_after(text[start:end], "bash")
+    return text[start:end]
+
+
+def shared_readonly_block() -> str:
+    section = step8_section()
+    start = section.index("### Shared deterministic read-only executor routing")
+    end = section.index("### Read-only FCOM classification", start)
+    return fenced_after(section[start:end], "bash")
+
+
+def fcom_route_block() -> str:
+    section = step8_section()
+    start = section.index("### Read-only FCOM classification")
+    end = section.index("### Existing FCOM mutation route", start)
+    return fenced_after(section[start:end], "bash")
+
+
+def legacy_fcom_mutation_block() -> str:
+    section = step8_section()
+    start = section.index("### Existing FCOM mutation route")
+    end = section.index("### Explicit structural target inspection", start)
+    return fenced_after(section[start:end], "bash")
+
+
+def inspect_route_block() -> str:
+    section = step8_section()
+    start = section.index("### Explicit structural target inspection")
+    return fenced_after(section[start:], "bash")
+
+
+def readonly_shell(route: str) -> str:
+    return shared_readonly_block() + "\n" + route
 
 
 def savedata_block() -> str:
@@ -79,7 +112,11 @@ def uaro_script() -> str:
     return text[start:end]
 
 
-def run_zsh(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def run_zsh(
+    script: str,
+    env: dict[str, str],
+    cwd: Optional[Path] = ROOT,
+) -> subprocess.CompletedProcess[str]:
     zsh = shutil.which("zsh")
     if not zsh:
         raise SkipCase("zsh is unavailable; macOS shell procedure checks skipped")
@@ -87,7 +124,7 @@ def run_zsh(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str
     merged.update(env)
     return subprocess.run(
         [zsh, "-c", script],
-        cwd=ROOT,
+        cwd=cwd,
         env=merged,
         text=True,
         capture_output=True,
@@ -108,41 +145,127 @@ def fixture_binary(a_state: bytes, b_state: bytes, size: Optional[int] = None) -
     return bytes(data)
 
 
-def run_fcom(data: bytes, backup: Optional[bytes] = None) -> Tuple[subprocess.CompletedProcess, bytes, Optional[bytes]]:
-    with tempfile.TemporaryDirectory(prefix="phase2a-fcom-") as temp:
-        game = Path(temp)
+def run_fcom_check(
+    data: bytes,
+    backup: Optional[bytes] = None,
+    repo_root: Path = ROOT,
+    cwd: Optional[Path] = None,
+) -> Tuple[subprocess.CompletedProcess[str], bytes, Optional[bytes]]:
+    with tempfile.TemporaryDirectory(prefix="phase2a-fcom-check-") as temp:
+        root = Path(temp)
+        game = root / "game dir with spaces"
+        game.mkdir()
         setup = game / "setup.exe"
         backup_path = game / "setup.exe.orig-backup"
         setup.write_bytes(data)
         if backup is not None:
             backup_path.write_bytes(backup)
-        proc = run_zsh(step8_block(), {"GAME_DIR": str(game)})
+        proc = run_zsh(
+            readonly_shell(fcom_route_block()),
+            {
+                "GAME_DIR": str(game),
+                "AURO_REPO_ROOT": str(repo_root),
+            },
+            cwd=cwd or root,
+        )
         final = setup.read_bytes()
         saved_backup = backup_path.read_bytes() if backup_path.exists() else None
         return proc, final, saved_backup
 
 
+def run_fcom_pipeline(
+    data: bytes,
+    backup: Optional[bytes] = None,
+    repo_root: Path = ROOT,
+    cwd: Optional[Path] = None,
+) -> Tuple[subprocess.CompletedProcess[str], bytes, Optional[bytes]]:
+    with tempfile.TemporaryDirectory(prefix="phase2a-fcom-pipeline-") as temp:
+        root = Path(temp)
+        game = root / "game dir with spaces"
+        game.mkdir()
+        setup = game / "setup.exe"
+        backup_path = game / "setup.exe.orig-backup"
+        setup.write_bytes(data)
+        if backup is not None:
+            backup_path.write_bytes(backup)
+        script = readonly_shell(fcom_route_block()) + "\n" + legacy_fcom_mutation_block()
+        proc = run_zsh(
+            script,
+            {
+                "GAME_DIR": str(game),
+                "AURO_REPO_ROOT": str(repo_root),
+            },
+            cwd=cwd or root,
+        )
+        final = setup.read_bytes()
+        saved_backup = backup_path.read_bytes() if backup_path.exists() else None
+        return proc, final, saved_backup
+
+
+def make_fake_repo(
+    root: Path,
+    executor: Optional[str],
+    origin: str = EXPECTED_ORIGIN,
+) -> Path:
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(root), "remote", "add", "origin", origin], check=True, capture_output=True, text=True)
+    if executor is not None:
+        scripts = root / "scripts"
+        scripts.mkdir()
+        path = scripts / "uaro.py"
+        path.write_text(executor)
+        path.chmod(0o755)
+    return root
+
+
+def run_fake_fcom_executor(
+    executor: str,
+    data: bytes,
+    origin: str = EXPECTED_ORIGIN,
+) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="phase2a-fcom-fake-") as temp:
+        root = Path(temp)
+        fake_repo = make_fake_repo(root / "fake-repo", executor, origin=origin)
+        game = root / "target"
+        game.mkdir()
+        (game / "setup.exe").write_bytes(data)
+        return run_zsh(
+            readonly_shell(fcom_route_block()),
+            {
+                "GAME_DIR": str(game),
+                "AURO_REPO_ROOT": str(fake_repo),
+            },
+            cwd=root,
+        )
+
+
 def test_fcom_states() -> None:
-    block = step8_block()
-    require(block.index("site_a =") < block.index("shutil.copy2"), "FCOM backup occurs before both sites are classified")
-    require(block.index("site_b =") < block.index("setup.write_bytes"), "FCOM target write occurs after Site B classification")
-    require("zero writes and no backup creation" in block, "FCOM unknown-state abort is not documented")
-    require("expected_offsets" in block and "final != bytes(expected)" in block, "FCOM exact-diff verification is missing")
+    route = fcom_route_block()
+    legacy = legacy_fcom_mutation_block()
+    require('python3 "$AURO_EXECUTOR" fcom check "$SETUP"' in route, "FCOM route does not invoke the deterministic executor")
+    require("resolve_uaro_executor" in route, "FCOM route does not resolve the executor")
+    require("remote.origin.url" in shared_readonly_block(), "executor resolver does not validate repository identity")
+    require("validate_uaro_json" in route, "FCOM route does not validate structured evidence")
+    require("fcom apply" not in route, "FCOM mutation command was integrated into the read-only route")
+    for duplicate in ("shutil.copy2", "setup.write_bytes", "def read_site", "expected_offsets", "SITE_A_OFFSET"):
+        require(duplicate not in route, f"duplicate executable FCOM classifier remains in read-only route: {duplicate}")
+    for required in ("shutil.copy2", "setup.write_bytes", "def read_site", "expected_offsets", "SITE_A_OFFSET"):
+        require(required in legacy, f"existing Step 8 mutation route is missing: {required}")
+    require("UNPATCHED" in route and "mutation authority remains denied" in route, "UNPATCHED evidence boundary is missing")
+    require("MIXED|UNKNOWN|TRUNCATED" in route, "FCOM fail-closed state handling is missing")
 
     original = fixture_binary(A_UNPATCHED, B_UNPATCHED)
-    proc, final, backup = run_fcom(original)
-    require(proc.returncode == 0, f"valid unpatched FCOM case failed: {report_process(proc)}")
-    require(backup == original, "valid unpatched case did not preserve the original backup")
-    changed = {i for i, (before, after) in enumerate(zip(original, final)) if before != after}
-    require(changed == EXPECTED_CHANGED, f"valid unpatched changed offsets were {sorted(changed)}")
-    require(final[A_OFFSET:A_OFFSET + 1] == A_PATCHED, "Site A final byte is wrong")
-    require(final[B_OFFSET:B_OFFSET + 4] == B_PATCHED, "Site B final bytes are wrong")
+    proc, final, backup = run_fcom_check(original, cwd=Path(tempfile.gettempdir()))
+    require(proc.returncode == 0, f"valid unpatched FCOM check failed: {report_process(proc)}")
+    require(final == original, "read-only unpatched FCOM check modified the target")
+    require(backup is None, "read-only unpatched FCOM check created a backup")
+    require("mutation authority remains denied" in proc.stdout, "UNPATCHED was treated as mutation authority")
 
     patched = fixture_binary(A_PATCHED, B_PATCHED)
-    proc, final, backup = run_fcom(patched)
-    require(proc.returncode == 0, f"already-patched case failed: {report_process(proc)}")
-    require(final == patched, "already-patched case modified the target")
-    require(backup is None, "already-patched case created a backup")
+    proc, final, backup = run_fcom_check(patched, cwd=Path(tempfile.gettempdir()))
+    require(proc.returncode == 0, f"already-patched FCOM check failed: {report_process(proc)}")
+    require(final == patched, "already-patched read-only check modified the target")
+    require(backup is None, "already-patched read-only check created a backup")
 
     cases = {
         "Site A unknown": fixture_binary(b"\x00", B_UNPATCHED),
@@ -151,18 +274,105 @@ def test_fcom_states() -> None:
         "truncated target": b"\x00" * (B_OFFSET + 2),
     }
     for name, data in cases.items():
-        proc, final, backup = run_fcom(data)
-        require(proc.returncode != 0, f"{name} unexpectedly succeeded: {report_process(proc)}")
+        proc, final, backup = run_fcom_check(data, cwd=Path(tempfile.gettempdir()))
+        require(proc.returncode != 0, f"{name} unexpectedly passed: {report_process(proc)}")
         require(final == data, f"{name} modified target bytes")
-        require(backup is None, f"{name} created a backup despite fail-closed abort")
+        require(backup is None, f"{name} created a backup despite fail-closed read-only handling")
 
     preserved = bytearray(original)
     preserved[-1] ^= 0xFF
-    proc, final, saved_backup = run_fcom(original, bytes(preserved))
-    require(proc.returncode == 0, f"existing-backup case failed: {report_process(proc)}")
-    require(saved_backup == bytes(preserved), "existing original backup was overwritten")
-    require(final != original, "existing-backup case did not patch the target")
+    proc, final, saved_backup = run_fcom_check(original, bytes(preserved), cwd=Path(tempfile.gettempdir()))
+    require(proc.returncode == 0, f"existing-backup read-only case failed: {report_process(proc)}")
+    require(final == original, "existing original backup case modified the target")
+    require(saved_backup == bytes(preserved), "existing original backup was modified")
 
+
+def test_fcom_legacy_mutation_route() -> None:
+    section = step8_section()
+    legacy = legacy_fcom_mutation_block()
+    require("temporary pre-Stage-2 path" in section, "temporary production mutation route is not documented")
+    require("Do not substitute the later Settings launcher" in section, "Step 11 was not distinguished from Step 8 mutation")
+
+    original = fixture_binary(A_UNPATCHED, B_UNPATCHED)
+    proc, final, backup = run_fcom_pipeline(original, cwd=Path(tempfile.gettempdir()))
+    require(proc.returncode == 0, f"read-only check plus existing mutation route failed: {report_process(proc)}")
+    require("mutation authority remains denied" in proc.stdout, "read-only check output did not remain evidence-only")
+    require("FCOM patch applied and verified" in proc.stdout, "existing Step 8 mutation route did not run")
+    require(final[A_OFFSET:A_OFFSET + 1] == A_PATCHED, "existing Step 8 mutation did not patch Site A")
+    require(final[B_OFFSET:B_OFFSET + 4] == B_PATCHED, "existing Step 8 mutation did not patch Site B")
+    require(backup == original, "existing Step 8 mutation did not preserve the original backup")
+
+
+def test_readonly_executor_integrity() -> None:
+    section = step8_section()
+    route = fcom_route_block() + "\n" + inspect_route_block()
+    require("/Users/" not in section and "/home/" not in section, "private absolute path was embedded in SKILL integration")
+    require("fcom apply" not in route, "FCOM apply was integrated")
+    require("backup savedata" not in route, "savedata backup was integrated")
+    require("EXECUTION=UNCONFIRMED" in inspect_route_block(), "inspect route does not keep execution unconfirmed")
+    require("BEHAVIOR=UNCONFIRMED" in inspect_route_block(), "inspect route does not keep behavior unconfirmed")
+    require("UaRO Game.app" in inspect_route_block() and 'required") is not False' in inspect_route_block(), "optional Game.app policy is missing")
+
+    original = fixture_binary(A_UNPATCHED, B_UNPATCHED)
+    with tempfile.TemporaryDirectory(prefix="phase2a-inspect-") as temp:
+        root = Path(temp)
+        game = root / "game"
+        game.mkdir()
+        (game / "setup.exe").write_bytes(original)
+        (game / "uaRO.exe").write_bytes(b"fixture")
+        (game / "savedata").mkdir()
+        apps = root / "apps"
+        for name in ("UaRO Patcher.app", "UaRO Settings.app"):
+            (apps / name).mkdir(parents=True)
+        before = tree_bytes(root)
+        proc = run_zsh(
+            readonly_shell(inspect_route_block()),
+            {
+                "GAME_DIR": str(game),
+                "APPS_DIR": str(apps),
+                "AURO_REPO_ROOT": str(ROOT),
+            },
+            cwd=root,
+        )
+        require(proc.returncode == 0, f"structural inspect route failed: {report_process(proc)}")
+        require("TARGET=PASS (explicit structural evidence only)" in proc.stdout, "inspect route did not report structural target evidence")
+        require("EXECUTION=UNCONFIRMED; BEHAVIOR=UNCONFIRMED" in proc.stdout, "inspect route claimed runtime or behavior proof")
+        require(tree_bytes(root) == before, "structural inspect route mutated its target fixture")
+
+        missing = root / "missing-game"
+        missing.mkdir()
+        proc = run_zsh(
+            readonly_shell(inspect_route_block()),
+            {
+                "GAME_DIR": str(missing),
+                "APPS_DIR": str(apps),
+                "AURO_REPO_ROOT": str(ROOT),
+            },
+            cwd=root,
+        )
+        require(proc.returncode != 0, "inspect route passed with a missing target")
+
+    missing_proc = run_fake_fcom_executor("#!/bin/sh\nexit 0\n", original)
+    require(missing_proc.returncode != 0, "missing executor unexpectedly passed")
+
+    malformed = "#!/bin/sh\nprintf 'not-json\\n'\n"
+    malformed_proc = run_fake_fcom_executor(malformed, original)
+    require(malformed_proc.returncode != 0, "malformed executor JSON unexpectedly passed")
+
+    incomplete = "#!/bin/sh\nprintf '{\"operation\":\"fcom-check\",\"result\":\"success\",\"mutation\":false}\\n'\n"
+    incomplete_proc = run_fake_fcom_executor(incomplete, original)
+    require(incomplete_proc.returncode != 0, "incomplete executor JSON unexpectedly passed")
+
+    nonzero = "#!/bin/sh\nprintf '{\"operation\":\"fcom-check\"}\\n'\nexit 7\n"
+    nonzero_proc = run_fake_fcom_executor(nonzero, original)
+    require(nonzero_proc.returncode != 0, "nonzero executor exit unexpectedly passed")
+
+    wrong_origin_proc = run_fake_fcom_executor(
+        "#!/bin/sh\nexit 0\n",
+        original,
+        origin="https://example.invalid/wrong-repository.git",
+    )
+    require(wrong_origin_proc.returncode != 0, "wrong repository origin unexpectedly supplied an executor")
 
 def tree_bytes(path: Path) -> Dict[str, bytes]:
     return {
@@ -508,7 +718,7 @@ def test_uaro_cli() -> None:
 
 
 def test_scope() -> None:
-    allowed = {"SKILL.md", "tests/README.md", "tests/phase2a.py"}
+    allowed = {"SKILL.md", "tests/phase2a.py", "tests/test_uaro.py"}
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
@@ -521,14 +731,19 @@ def test_scope() -> None:
         value = line[3:]
         if " -> " in value:
             value = value.split(" -> ", 1)[1]
-        paths.add(value.strip('"'))
+        value = value.strip('"')
+        if "/__pycache__/" in f"/{value}" or value.endswith(".pyc"):
+            continue
+        paths.add(value)
     require(paths <= allowed, f"unexpected changed paths: {sorted(paths)}")
 
 
 def run_all() -> int:
     tests = (
         ("F-01 verify-only boundary", test_verify_only_boundary),
-        ("F-02 FCOM fail-closed procedure", test_fcom_states),
+        ("F-02 read-only executor routing", test_fcom_states),
+        ("F-02 existing mutation route", test_fcom_legacy_mutation_route),
+        ("Stage 1 executor integrity", test_readonly_executor_integrity),
         ("F-03 execution gate", test_execution_gate),
         ("F-05 uaro-cli false-success", test_uaro_cli),
         ("F-06 savedata backup gate", test_savedata_gate),

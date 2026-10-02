@@ -585,23 +585,156 @@ If it landed somewhere else, **adopt that real path as `GAME_DIR` for every step
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
-setup.exe here is a different file from UaRO_Setup.exe, the installer Step 6/7 just downloaded and ran, despite the near-identical name. UaRO_Setup.exe is the Inno Setup installer, already done with its job by this point. setup.exe is RO OpenSetup, the game's own graphics-config tool, sitting inside GAME_DIR (installed alongside the game itself, not related to Step 6/7's installer). This step patches that second file, not the first.
+setup.exe here is a different file from UaRO_Setup.exe, the installer Step 6/7 just downloaded and ran, despite the near-identical name. UaRO_Setup.exe is the Inno Setup installer, already done with its job by this point. setup.exe is RO OpenSetup, the game's own graphics-config tool, sitting inside GAME_DIR (installed alongside the game itself, not related to Step 6/7's installer). This step inspects that second file, not the first.
 
-Rosetta cannot translate certain alternate x87 FCOM instruction encodings; running them crashes setup.exe with an illegal-instruction error. The procedure below is fail-closed:
-
-```text
-READ BOTH PATCH SITES → CLASSIFY BOTH → validate the pair
-UNKNOWN / MIXED / TRUNCATED → ZERO WRITE → ABORT
-BOTH PATCHED → NO-OP
-BOTH EXPECTED UNPATCHED → validate/create backup → patch both → read back → verify exact bytes and exact diff
-```
+Rosetta cannot translate certain alternate x87 FCOM instruction encodings; running them crashes setup.exe with an illegal-instruction error. Read-only classification is now provided by the deterministic executor. This section keeps the policy and interpretation; the byte-reading algorithm lives in `scripts/uaro.py`.
 
 Known states:
 
-- Site A at 0x2C0CD: unpatched dc; patched d8.
-- Site B at 0x21E39: unpatched dcd8dfe0; patched ddd8b440.
+- Site A at 0x2C0CD: unpatched `dc`; patched `d8`.
+- Site B at 0x21E39: unpatched `dcd8dfe0`; patched `ddd8b440`.
 
-Both sites are read and classified before backup creation or target modification. The checks are byte comparisons performed by Python; they do not rely on a human visually inspecting xxd.
+The expected pair is classified only after both sites are read. `UNKNOWN`, `MIXED`, and `TRUNCATED` are fail-closed states. A read-only check never creates a backup and never writes `setup.exe`.
+
+### Shared deterministic read-only executor routing
+
+The read-only FCOM and structural-inspection blocks below must be run in the same shell invocation as this helper block so the functions are available. Set `AURO_REPO_ROOT` to this checkout when the current working directory is elsewhere; when it is unset, the current directory is used only if Git can resolve it to the expected repository. The helper validates the Git root, the expected `origin`, and the readable executor file. A missing or different origin is `BLOCKED`; never guess another checkout. No private absolute path is embedded.
+
+```bash
+resolve_uaro_executor() {
+  local repo_hint="${AURO_REPO_ROOT:-$PWD}"
+  [[ -n "$repo_hint" ]] || {
+    echo "BLOCKED: AURO_REPO_ROOT/PWD is empty; cannot resolve the deterministic executor" >&2
+    return 1
+  }
+  local repo_root
+  repo_root="$(git -C "$repo_hint" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "BLOCKED: cannot resolve a Git repository root from AURO_REPO_ROOT/PWD" >&2
+    return 1
+  }
+  local origin_url
+  origin_url="$(git -C "$repo_root" config --get remote.origin.url 2>/dev/null || true)"
+  case "$origin_url" in
+    https://github.com/jirukouya/auRO-whisky-macOS-setup|https://github.com/jirukouya/auRO-whisky-macOS-setup.git|git@github.com:jirukouya/auRO-whisky-macOS-setup.git|ssh://git@github.com/jirukouya/auRO-whisky-macOS-setup.git)
+      ;;
+    *)
+      echo "BLOCKED: Git repository origin is not the expected auRO-whisky-macOS-setup checkout" >&2
+      return 1
+      ;;
+  esac
+  local executor="$repo_root/scripts/uaro.py"
+  [[ -f "$executor" && -r "$executor" ]] || {
+    echo "BLOCKED: deterministic executor is missing or unreadable: $executor" >&2
+    return 1
+  }
+  printf '%s\n' "$executor"
+}
+
+validate_uaro_json() {
+  local payload="$1"
+  local expected_operation="$2"
+  local expected_path_key="$3"
+  local expected_path="$4"
+  python3 - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed deterministic executor JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: deterministic executor JSON is not an object", file=sys.stderr)
+    raise SystemExit(1)
+expected_operation = sys.argv[2]
+expected_path_key = sys.argv[3]
+expected_path = sys.argv[4]
+missing = [key for key in ("operation", "result", "mutation") if key not in payload]
+if missing:
+    print(f"BLOCKED: deterministic executor JSON is incomplete: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["operation"] != expected_operation:
+    print("BLOCKED: deterministic executor returned an unexpected operation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["result"] != "success":
+    print("BLOCKED: deterministic executor did not report success", file=sys.stderr)
+    raise SystemExit(1)
+if payload["mutation"] is not False:
+    print("BLOCKED: read-only executor result did not prove mutation=false", file=sys.stderr)
+    raise SystemExit(1)
+if expected_path_key and payload.get(expected_path_key) != expected_path:
+    print("BLOCKED: deterministic executor result names a different target", file=sys.stderr)
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
+PYEOF
+}
+```
+
+### Read-only FCOM classification
+
+Run the helper block and this block together. `UNPATCHED` is valid evidence that a later, separately authorized mutation could be considered; it is not mutation authority. `PATCHED` means no mutation is needed. Every other state blocks.
+
+```bash
+SETUP="${GAME_DIR:?Resolve GAME_DIR to the installed game directory before running this block}/setup.exe"
+AURO_EXECUTOR="$(resolve_uaro_executor)" || { echo "BLOCKED: deterministic executor path is unavailable" >&2; exit 1; }
+
+if ! CHECK_JSON="$(python3 "$AURO_EXECUTOR" fcom check "$SETUP")"; then
+  echo "BLOCKED: deterministic FCOM check failed" >&2
+  exit 1
+fi
+if ! CHECK_JSON="$(validate_uaro_json "$CHECK_JSON" "fcom-check" "target" "$SETUP")"; then
+  exit 1
+fi
+if ! CHECK_STATE="$(python3 - "$CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed FCOM evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+required = ("state", "site_a", "site_b", "backup_created", "verification")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete FCOM evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] not in ("UNPATCHED", "PATCHED", "MIXED", "UNKNOWN", "TRUNCATED"):
+    print("BLOCKED: unexpected FCOM state", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: read-only FCOM evidence contains mutation or backup claims", file=sys.stderr)
+    raise SystemExit(1)
+print(payload["state"])
+PYEOF
+)"; then
+  exit 1
+fi
+
+case "$CHECK_STATE" in
+  UNPATCHED)
+    echo "TARGET FCOM evidence: UNPATCHED; mutation authority remains denied"
+    ;;
+  PATCHED)
+    echo "TARGET FCOM evidence: PATCHED; no mutation needed"
+    ;;
+  MIXED|UNKNOWN|TRUNCATED)
+    echo "BLOCKED: FCOM state=$CHECK_STATE; no write or backup is authorized" >&2
+    exit 1
+    ;;
+  *)
+    echo "BLOCKED: unexpected FCOM state=$CHECK_STATE" >&2
+    exit 1
+    ;;
+esac
+```
+
+If the executor is missing, cannot be resolved, exits nonzero, returns malformed or incomplete JSON, or names a different target, stop. Do not fall back to a shell byte classifier. The executor's structured result is evidence only; it does not prove process execution, launcher behavior, patch freshness, or user authority.
+
+### Existing FCOM mutation route (temporary pre-Stage-2 path)
+
+For a fresh or adopted install, run this existing approved mutation block directly after the read-only check above, in the same shell invocation. The check's `UNPATCHED` output is evidence only; this block remains the temporary production mutation mechanism until the deterministic mutation command is integrated in Stage 2. It reclassifies both sites before creating or validating the backup, refuses unknown/mixed/truncated context, preserves an existing valid backup, and verifies the exact final diff. Do not substitute the later Settings launcher for this Step 8 route.
 
 ```bash
 SETUP="$GAME_DIR/setup.exe"
@@ -740,7 +873,76 @@ print("FCOM patch applied and verified: exact final bytes and expected diff")
 PYEOF
 ```
 
-If either site is unknown, truncated, or disagrees with the other site, stop. Do not create or replace the backup and do not modify setup.exe. If both sites are already patched, the command exits cleanly without creating a backup. If both are unpatched, the original backup is preserved and validated before the two writes occur.
+### Explicit structural target inspection
+
+Use this route for target evidence only. It checks the explicitly supplied game and application paths and reports `EXECUTION=UNCONFIRMED` and `BEHAVIOR=UNCONFIRMED` even when all structural facts are present. `UaRO Patcher.app` and `UaRO Settings.app` are required structural targets; `UaRO Game.app` remains optional.
+
+Run the helper block and this block together. `APPS_DIR` defaults to `/Applications` and may be set to another explicitly inspected application directory for a controlled verification.
+
+```bash
+GAME_DIR="${GAME_DIR:?Resolve GAME_DIR to the installed game directory before running this block}"
+APPS_DIR="${APPS_DIR:-/Applications}"
+AURO_EXECUTOR="$(resolve_uaro_executor)" || { echo "BLOCKED: deterministic executor path is unavailable" >&2; exit 1; }
+
+if ! INSPECT_JSON="$(python3 "$AURO_EXECUTOR" inspect --game-dir "$GAME_DIR" --apps-dir "$APPS_DIR")"; then
+  echo "BLOCKED: deterministic structural inspection failed" >&2
+  exit 1
+fi
+if ! INSPECT_JSON="$(validate_uaro_json "$INSPECT_JSON" "inspect" "game_dir" "$GAME_DIR")"; then
+  exit 1
+fi
+python3 - "$INSPECT_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed structural evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("evidence_scope") != "explicit structural facts only":
+    print("BLOCKED: structural inspection scope is not explicit", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("execution") != "UNCONFIRMED":
+    print("BLOCKED: structural inspection cannot prove execution", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("mutation") is not False or payload.get("deletion_authority") is not False:
+    print("BLOCKED: structural inspection returned an authority claim", file=sys.stderr)
+    raise SystemExit(1)
+evidence = payload.get("evidence")
+if not isinstance(evidence, dict):
+    print("BLOCKED: structural inspection omitted evidence", file=sys.stderr)
+    raise SystemExit(1)
+for key in ("game_dir_exists", "uaro_exe_exists", "setup_exe_exists", "fcom", "savedata"):
+    if key not in evidence:
+        print(f"BLOCKED: structural inspection omitted {key}", file=sys.stderr)
+        raise SystemExit(1)
+if not all(evidence[key] is True for key in ("game_dir_exists", "uaro_exe_exists", "setup_exe_exists")):
+    print("BLOCKED: required game target structure is missing", file=sys.stderr)
+    raise SystemExit(1)
+fcom = evidence["fcom"]
+if not isinstance(fcom, dict) or fcom.get("result") != "success" or fcom.get("state") not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: FCOM structural evidence is unavailable or fail-closed", file=sys.stderr)
+    raise SystemExit(1)
+apps = payload.get("apps")
+if not isinstance(apps, dict):
+    print("BLOCKED: application structural evidence is missing", file=sys.stderr)
+    raise SystemExit(1)
+for name in ("UaRO Patcher.app", "UaRO Settings.app"):
+    record = apps.get(name)
+    if not isinstance(record, dict) or record.get("required") is not True or record.get("exists") is not True:
+        print(f"BLOCKED: required launcher structure is missing: {name}", file=sys.stderr)
+        raise SystemExit(1)
+optional_game = apps.get("UaRO Game.app")
+if not isinstance(optional_game, dict) or optional_game.get("required") is not False:
+    print("BLOCKED: optional Game.app was not represented as optional", file=sys.stderr)
+    raise SystemExit(1)
+print("TARGET=PASS (explicit structural evidence only)")
+print("EXECUTION=UNCONFIRMED; BEHAVIOR=UNCONFIRMED")
+PYEOF
+```
+
+A missing or unreadable target, missing required launcher structure, unavailable FCOM evidence, malformed result, nonzero executor exit, or unresolved invocation path is `BLOCKED`. Structural evidence does not prove Whisky/Wine runtime use, process arguments, launcher behavior, login stability, patch freshness, overall install health, or user authority. Any later mutation, backup, uninstall, or deletion route remains separately gated and is not part of this read-only integration.
 
 If setup.exe crashes at a different 0042xxxx address, subtract the PE ImageBase 0x400000 to get the file offset. 0x0042C0CD maps to Site A and 0x00421E39 maps to Site B. Any other address is an uncatalogued third site from a newer installer build; dump the surrounding bytes and stop rather than changing these approved historical values.
 
