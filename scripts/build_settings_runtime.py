@@ -41,9 +41,20 @@ EXPECTED_ORIGINS = frozenset(
 )
 CANONICAL_SOURCE = "scripts/uaro.py"
 EXECUTOR_RELPATH = "uaro.py"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 INTERFACE_VERSION = 1
 MANIFEST_NAME = "MANIFEST.json"
+PYTHON_MINIMUM_VERSION = (3, 10, 0)
+PYTHON_REQUIRED_MODULES = (
+    "argparse",
+    "hashlib",
+    "json",
+    "os",
+    "pathlib",
+    "shutil",
+    "stat",
+    "typing",
+)
 REQUIRED_MANIFEST_KEYS = frozenset(
     {
         "schema_version",
@@ -52,7 +63,11 @@ REQUIRED_MANIFEST_KEYS = frozenset(
         "executor_sha256",
         "executor_relpath",
         "interface_version",
+        "python",
     }
+)
+PYTHON_CONTRACT_KEYS = frozenset(
+    {"invocation_path", "resolved_path", "version", "minimum_version"}
 )
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -68,6 +83,32 @@ class SettingsRuntimeBuildError(SettingsRuntimeError):
 
 class SettingsRuntimeVerificationError(SettingsRuntimeError):
     """The deployed runtime artifact is invalid or incomplete."""
+
+
+class PythonRuntimeError(SettingsRuntimeError):
+    """The explicit Python interpreter does not satisfy the runtime contract."""
+
+
+PYTHON_PROBE = r'''
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import sys
+import typing
+
+required = %r
+for module_name in required:
+    __import__(module_name)
+print(json.dumps({
+    "implementation": sys.implementation.name,
+    "version": [sys.version_info.major, sys.version_info.minor, sys.version_info.micro],
+    "executable": os.path.realpath(sys.executable),
+}, sort_keys=True, separators=(",", ":")))
+''' % (PYTHON_REQUIRED_MODULES,)
 
 
 def _run_git(repo_root: Path, *args: str) -> str:
@@ -138,14 +179,140 @@ def _source_commit(repo_root: Path) -> str:
     return commit
 
 
-def _manifest(source_commit: str, executor_sha256: str) -> Dict[str, Any]:
+def _manifest(source_commit: str, executor_sha256: str, python_contract: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "canonical_source": CANONICAL_SOURCE,
         "executor_relpath": EXECUTOR_RELPATH,
         "executor_sha256": executor_sha256,
         "interface_version": INTERFACE_VERSION,
+        "python": python_contract,
         "schema_version": SCHEMA_VERSION,
         "source_commit": source_commit,
+    }
+
+
+def _version_dict(version: tuple[int, int, int]) -> Dict[str, int]:
+    return {"major": version[0], "minor": version[1], "micro": version[2]}
+
+
+def _parse_version(value: Any, label: str) -> tuple[int, int, int]:
+    if not isinstance(value, dict) or set(value) != {"major", "minor", "micro"}:
+        raise PythonRuntimeError(f"{label} is malformed")
+    parts = (value["major"], value["minor"], value["micro"])
+    if any(type(part) is not int or part < 0 for part in parts):
+        raise PythonRuntimeError(f"{label} is malformed")
+    return parts
+
+
+def _absolute_invocation_path(value: Any) -> Path:
+    if not isinstance(value, str) or not value:
+        raise PythonRuntimeError("interpreter invocation_path is malformed")
+    path = Path(value)
+    if not path.is_absolute():
+        raise PythonRuntimeError("interpreter invocation_path must be absolute")
+    return Path(os.path.abspath(path))
+
+
+def _validate_interpreter_file(path: Path) -> Path:
+    if not path.exists():
+        raise PythonRuntimeError(f"interpreter is missing: {path}")
+    if not path.is_file():
+        raise PythonRuntimeError(f"interpreter is not a regular file: {path}")
+    if not os.access(path, os.X_OK):
+        raise PythonRuntimeError(f"interpreter is not executable: {path}")
+    try:
+        return path.resolve(strict=True)
+    except OSError as exc:
+        raise PythonRuntimeError(f"interpreter cannot be resolved: {exc}") from exc
+
+
+def _probe_python(path: Path) -> Dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            [str(path), "-c", PYTHON_PROBE],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise PythonRuntimeError(f"interpreter probe failed: {exc}") from exc
+    try:
+        payload = json.loads(completed.stdout.strip())
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise PythonRuntimeError(f"interpreter probe returned malformed JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise PythonRuntimeError("interpreter probe did not return an object")
+    required = {"implementation", "version", "executable"}
+    if set(payload) != required:
+        raise PythonRuntimeError("interpreter probe returned incomplete metadata")
+    if not isinstance(payload["implementation"], str) or not payload["implementation"]:
+        raise PythonRuntimeError("interpreter probe returned an invalid implementation")
+    version = payload["version"]
+    if not isinstance(version, list) or len(version) != 3 or any(type(part) is not int for part in version):
+        raise PythonRuntimeError("interpreter probe returned a malformed version")
+    executable = payload["executable"]
+    if not isinstance(executable, str) or not Path(executable).is_absolute():
+        raise PythonRuntimeError("interpreter probe returned an invalid executable path")
+    return payload
+
+
+def _ensure_supported_version(version: tuple[int, int, int]) -> None:
+    if version[0] != 3:
+        raise PythonRuntimeError("interpreter must be Python major version 3")
+    if version < PYTHON_MINIMUM_VERSION:
+        raise PythonRuntimeError("interpreter must be Python 3.10 or newer")
+
+
+def _contract_from_interpreter(interpreter_path: str | os.PathLike[str]) -> Dict[str, Any]:
+    invocation_path = _absolute_invocation_path(str(interpreter_path))
+    resolved_path = _validate_interpreter_file(invocation_path)
+    probe = _probe_python(invocation_path)
+    version = tuple(probe["version"])
+    _ensure_supported_version(version)
+    return {
+        "invocation_path": str(invocation_path),
+        "resolved_path": str(resolved_path),
+        "version": _version_dict(version),
+        "minimum_version": _version_dict(PYTHON_MINIMUM_VERSION),
+    }
+
+
+def _validate_contract_metadata(contract: Any) -> tuple[Path, tuple[int, int, int], tuple[int, int, int]]:
+    if not isinstance(contract, dict) or set(contract) != PYTHON_CONTRACT_KEYS:
+        raise PythonRuntimeError("manifest Python contract is malformed")
+    invocation_path = _absolute_invocation_path(contract["invocation_path"])
+    resolved_path = contract["resolved_path"]
+    if not isinstance(resolved_path, str) or not Path(resolved_path).is_absolute():
+        raise PythonRuntimeError("manifest Python resolved_path is malformed")
+    generation_version = _parse_version(contract["version"], "manifest Python version")
+    minimum_version = _parse_version(contract["minimum_version"], "manifest Python minimum_version")
+    if minimum_version != PYTHON_MINIMUM_VERSION:
+        raise PythonRuntimeError("manifest Python minimum_version is unsupported")
+    _ensure_supported_version(generation_version)
+    return invocation_path, generation_version, minimum_version
+
+
+def validate_python_runtime(contract: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate the recorded interpreter without searching for a fallback."""
+
+    invocation_path, _, minimum_version = _validate_contract_metadata(contract)
+    resolved_path = _validate_interpreter_file(invocation_path)
+    probe = _probe_python(invocation_path)
+    observed_version = tuple(probe["version"])
+    if observed_version[0] != minimum_version[0]:
+        raise PythonRuntimeError("runtime interpreter has an unsupported major version")
+    if observed_version < minimum_version:
+        raise PythonRuntimeError("runtime interpreter is older than the supported minimum")
+    return {
+        "usable": True,
+        "reason": "recorded Python interpreter satisfies the runtime contract",
+        "invocation_path": str(invocation_path),
+        "resolved_path_current": str(resolved_path),
+        "observed_version": _version_dict(observed_version),
+        "minimum_version": _version_dict(minimum_version),
+        "implementation": probe["implementation"],
+        "observed_executable": probe["executable"],
     }
 
 
@@ -156,6 +323,7 @@ def _manifest_bytes(manifest: Dict[str, Any]) -> bytes:
 def build_settings_runtime(
     repo_root: str | os.PathLike[str],
     destination: str | os.PathLike[str],
+    python_path: str | os.PathLike[str],
 ) -> Dict[str, Any]:
     """Copy the clean canonical executor and generate a deterministic manifest."""
 
@@ -164,6 +332,7 @@ def build_settings_runtime(
     source = _canonical_source(validated_root)
     source_bytes = _ensure_clean_canonical_source(validated_root, source, source_commit)
     executor_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    python_contract = _contract_from_interpreter(python_path)
 
     runtime_dir = Path(destination).expanduser()
     if runtime_dir.exists() and runtime_dir.is_symlink():
@@ -184,7 +353,7 @@ def build_settings_runtime(
         executor_path.chmod(source.stat().st_mode & 0o777)
     except OSError as exc:
         raise SettingsRuntimeBuildError(f"cannot write deployed executor: {exc}") from exc
-    manifest = _manifest(source_commit, executor_sha256)
+    manifest = _manifest(source_commit, executor_sha256, python_contract)
     try:
         manifest_path.write_bytes(_manifest_bytes(manifest))
     except OSError as exc:
@@ -234,6 +403,10 @@ def verify_settings_runtime(runtime_dir: str | os.PathLike[str]) -> Dict[str, An
     expected_digest = manifest["executor_sha256"]
     if not isinstance(expected_digest, str) or not HEX64.fullmatch(expected_digest):
         raise SettingsRuntimeVerificationError("invalid executor_sha256 representation")
+    try:
+        _validate_contract_metadata(manifest["python"])
+    except PythonRuntimeError as exc:
+        raise SettingsRuntimeVerificationError(str(exc)) from exc
 
     executor_path = root / EXECUTOR_RELPATH
     if not executor_path.is_file() or executor_path.is_symlink():
@@ -249,6 +422,7 @@ def verify_settings_runtime(runtime_dir: str | os.PathLike[str]) -> Dict[str, An
         "source_commit": source_commit,
         "schema_version": SCHEMA_VERSION,
         "interface_version": INTERFACE_VERSION,
+        "python": manifest["python"],
     }
 
 
@@ -258,12 +432,13 @@ def _main(argv: list[str] | None = None) -> int:
     build = subparsers.add_parser("build", help="copy the canonical executor and write MANIFEST.json")
     build.add_argument("--repo-root", required=True)
     build.add_argument("--destination", required=True)
+    build.add_argument("--python", dest="python_path", required=True)
     verify = subparsers.add_parser("verify", help="verify a generated runtime without its source repository")
     verify.add_argument("--runtime-dir", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
-            result = build_settings_runtime(args.repo_root, args.destination)
+            result = build_settings_runtime(args.repo_root, args.destination, args.python_path)
         else:
             result = verify_settings_runtime(args.runtime_dir)
     except SettingsRuntimeError as exc:

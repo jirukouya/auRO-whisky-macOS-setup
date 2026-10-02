@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,8 +33,45 @@ class SettingsRuntimeTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "fixture"], check=True)
         return repo
 
-    def build(self, repo: Path, destination: Path) -> dict:
-        return runtime.build_settings_runtime(repo, destination)
+    def build(self, repo: Path, destination: Path, python_path: str | Path | None = None) -> dict:
+        return runtime.build_settings_runtime(repo, destination, python_path or sys.executable)
+
+    def make_fake_interpreter(
+        self,
+        parent: Path,
+        name: str,
+        version: tuple[int, int, int] = (3, 12, 0),
+        mode: str = "valid",
+        executable: bool = True,
+    ) -> Path:
+        path = parent / name
+        path.write_text(
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "config = json.loads(Path(str(Path(__file__)) + '.json').read_text())\n"
+            "if len(sys.argv) < 2 or sys.argv[1] != '-c':\n"
+            "    raise SystemExit(2)\n"
+            "if config['mode'] == 'fail':\n"
+            "    raise SystemExit(9)\n"
+            "if config['mode'] == 'malformed':\n"
+            "    print('not-json')\n"
+            "    raise SystemExit(0)\n"
+            "print(json.dumps({'implementation': 'CPython', 'version': config['version'], 'executable': sys.executable}, sort_keys=True))\n",
+            encoding="utf-8",
+        )
+        path.with_name(path.name + ".json").write_text(
+            json.dumps({"mode": mode, "version": list(version)}), encoding="utf-8"
+        )
+        path.chmod(0o755 if executable else 0o644)
+        return path
+
+    def make_non_python(self, parent: Path, name: str = "not-python") -> Path:
+        path = parent / name
+        path.write_text("#!/bin/sh\necho not-python\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
 
     def test_valid_artifact_and_byte_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -47,12 +85,116 @@ class SettingsRuntimeTests(unittest.TestCase):
             self.assertEqual(set(manifest), runtime.REQUIRED_MANIFEST_KEYS)
             self.assertEqual(manifest["canonical_source"], "scripts/uaro.py")
             self.assertEqual(manifest["executor_relpath"], "uaro.py")
-            self.assertEqual(manifest["interface_version"], 1)
-            self.assertEqual(manifest["schema_version"], 1)
+            self.assertEqual(manifest["interface_version"], runtime.INTERFACE_VERSION)
+            self.assertEqual(manifest["schema_version"], runtime.SCHEMA_VERSION)
+            self.assertEqual(manifest["python"]["invocation_path"], str(Path(sys.executable).absolute()))
+            self.assertEqual(manifest["python"]["minimum_version"], {"major": 3, "minor": 10, "micro": 0})
             self.assertEqual((destination / "uaro.py").read_bytes(), (ROOT / "scripts/uaro.py").read_bytes())
             self.assertEqual(
                 built["executor_sha256"], hashlib.sha256((destination / "uaro.py").read_bytes()).hexdigest()
             )
+
+    def test_explicit_supported_python_path_generates_and_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            interpreter = self.make_fake_interpreter(root, "python3-contract")
+            destination = root / "runtime"
+            self.build(ROOT, destination, interpreter)
+            manifest = json.loads((destination / "MANIFEST.json").read_text(encoding="utf-8"))
+            evidence = runtime.validate_python_runtime(manifest["python"])
+            self.assertTrue(evidence["usable"])
+            self.assertEqual(evidence["invocation_path"], str(interpreter.absolute()))
+            self.assertEqual(evidence["observed_version"], {"major": 3, "minor": 12, "micro": 0})
+
+    def test_invalid_explicit_interpreter_paths_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cases = {
+                "relative": "python3",
+                "missing": str(root / "missing-python"),
+            }
+            for name, path in cases.items():
+                with self.subTest(name=name):
+                    with self.assertRaises(runtime.PythonRuntimeError):
+                        runtime.build_settings_runtime(ROOT, root / name, path)
+
+            non_executable = self.make_fake_interpreter(root, "non-executable", executable=False)
+            with self.assertRaises(runtime.PythonRuntimeError):
+                runtime.build_settings_runtime(ROOT, root / "non-executable-runtime", non_executable)
+
+            non_python = self.make_non_python(root)
+            with self.assertRaises(runtime.PythonRuntimeError):
+                runtime.build_settings_runtime(ROOT, root / "non-python-runtime", non_python)
+
+    def test_old_or_non_python_versions_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, version in (("python2", (2, 7, 18)), ("python39", (3, 9, 19))):
+                interpreter = self.make_fake_interpreter(root, name, version=version)
+                with self.subTest(name=name), self.assertRaises(runtime.PythonRuntimeError):
+                    runtime.build_settings_runtime(ROOT, root / f"{name}-runtime", interpreter)
+
+    def test_probe_failure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            interpreter = self.make_fake_interpreter(root, "probe-failure", mode="fail")
+            with self.assertRaises(runtime.PythonRuntimeError):
+                runtime.build_settings_runtime(ROOT, root / "runtime", interpreter)
+            malformed = self.make_fake_interpreter(root, "probe-malformed", mode="malformed")
+            with self.assertRaises(runtime.PythonRuntimeError):
+                runtime.build_settings_runtime(ROOT, root / "malformed-runtime", malformed)
+
+    def test_malformed_python_contract_is_rejected_without_running_interpreter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp) / "runtime"
+            self.build(ROOT, destination)
+            manifest_path = destination / "MANIFEST.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["python"] = {"invocation_path": "python3"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaises(runtime.SettingsRuntimeVerificationError):
+                runtime.verify_settings_runtime(destination)
+
+    def test_supported_upgrade_at_same_invocation_path_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            interpreter = self.make_fake_interpreter(root, "stable-python", version=(3, 12, 0))
+            destination = root / "runtime"
+            self.build(ROOT, destination, interpreter)
+            manifest = json.loads((destination / "MANIFEST.json").read_text(encoding="utf-8"))
+            interpreter.with_name(interpreter.name + ".json").write_text(
+                json.dumps({"mode": "valid", "version": [3, 13, 1]}), encoding="utf-8"
+            )
+            evidence = runtime.validate_python_runtime(manifest["python"])
+            self.assertEqual(evidence["observed_version"], {"major": 3, "minor": 13, "micro": 1})
+
+    def test_incompatible_upgrade_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            interpreter = self.make_fake_interpreter(root, "stable-python", version=(3, 12, 0))
+            destination = root / "runtime"
+            self.build(ROOT, destination, interpreter)
+            manifest = json.loads((destination / "MANIFEST.json").read_text(encoding="utf-8"))
+            interpreter.with_name(interpreter.name + ".json").write_text(
+                json.dumps({"mode": "valid", "version": [3, 9, 19]}), encoding="utf-8"
+            )
+            with self.assertRaises(runtime.PythonRuntimeError):
+                runtime.validate_python_runtime(manifest["python"])
+
+    def test_missing_runtime_has_no_path_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            valid = self.make_fake_interpreter(root, "path-python")
+            contract = {
+                "invocation_path": str(root / "deleted-python"),
+                "resolved_path": str(root / "deleted-python"),
+                "version": {"major": 3, "minor": 12, "micro": 0},
+                "minimum_version": {"major": 3, "minor": 10, "micro": 0},
+            }
+            with mock.patch.dict(os.environ, {"PATH": str(root)}, clear=False):
+                with self.assertRaises(runtime.PythonRuntimeError):
+                    runtime.validate_python_runtime(contract)
+            self.assertTrue(valid.exists())
 
     def test_repository_independence_after_source_disappears(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -60,8 +202,10 @@ class SettingsRuntimeTests(unittest.TestCase):
             repo = self.make_repo_fixture(root)
             destination = root / "runtime"
             self.build(repo, destination)
+            manifest = json.loads((destination / "MANIFEST.json").read_text(encoding="utf-8"))
             shutil.rmtree(repo)
             self.assertEqual(runtime.verify_settings_runtime(destination)["result"], "success")
+            self.assertTrue(runtime.validate_python_runtime(manifest["python"])["usable"])
 
     def test_tamper_and_missing_artifacts_fail_closed(self) -> None:
         cases = ("tamper", "missing-executor", "missing-manifest", "malformed-manifest", "digest")
@@ -91,8 +235,8 @@ class SettingsRuntimeTests(unittest.TestCase):
 
     def test_manifest_schema_path_and_identity_validation(self) -> None:
         mutations = {
-            "schema_version": 2,
-            "interface_version": 2,
+            "schema_version": runtime.SCHEMA_VERSION + 1,
+            "interface_version": runtime.INTERFACE_VERSION + 1,
             "executor_relpath": "elsewhere/uaro.py",
             "canonical_source": "other.py",
             "source_commit": "not-a-commit",
@@ -134,6 +278,19 @@ class SettingsRuntimeTests(unittest.TestCase):
             self.build(ROOT, second)
             self.assertEqual((first / "uaro.py").read_bytes(), (second / "uaro.py").read_bytes())
             self.assertEqual((first / "MANIFEST.json").read_bytes(), (second / "MANIFEST.json").read_bytes())
+
+    def test_changing_generation_interpreter_contract_changes_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first_interpreter = self.make_fake_interpreter(root, "python-first", version=(3, 12, 0))
+            second_interpreter = self.make_fake_interpreter(root, "python-second", version=(3, 12, 0))
+            first = root / "first"
+            second = root / "second"
+            self.build(ROOT, first, first_interpreter)
+            self.build(ROOT, second, second_interpreter)
+            self.assertNotEqual(
+                (first / "MANIFEST.json").read_bytes(), (second / "MANIFEST.json").read_bytes()
+            )
 
     def test_builder_contains_no_second_executor(self) -> None:
         source = (ROOT / "scripts/build_settings_runtime.py").read_text(encoding="utf-8")
