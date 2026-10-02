@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Small deterministic uaRO execution primitives.
 
-This spike contains only the Phase 2A FCOM classification and patch
-transaction.  It intentionally does not discover uaRO paths or perform any
-other installation, repair, backup, or uninstall work.
+This spike contains the Phase 2A FCOM transaction, savedata backup, and
+explicit-path structural inspection. It intentionally does not discover uaRO
+paths or perform installation, repair, launcher, or uninstall work.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import hashlib
+import os
 from pathlib import Path
 import shutil
 import stat
-import sys
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 
 SITE_A_OFFSET = 0x2C0CD
@@ -29,6 +30,10 @@ EXPECTED_CHANGED_OFFSETS = {
     SITE_B_OFFSET + 2,
     SITE_B_OFFSET + 3,
 }
+
+
+class UnsupportedEntryError(Exception):
+    """A filesystem entry cannot be compared safely by this spike."""
 
 
 def _site_state(data: bytes, offset: int, unpatched: bytes, patched: bytes) -> str:
@@ -193,6 +198,274 @@ def apply_fcom(target_path: str | Path) -> Dict[str, object]:
     return result
 
 
+def _snapshot_tree(root: Path) -> Dict[str, Tuple[str, int, str]]:
+    """Return a deterministic tree snapshot, rejecting unsupported entries."""
+
+    entries: Dict[str, Tuple[str, int, str]] = {}
+
+    def visit(directory: Path, relative: Path) -> None:
+        try:
+            children = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except OSError as exc:
+            raise OSError(f"cannot read {directory}: {exc}") from exc
+        for entry in children:
+            child_relative = relative / entry.name
+            key = child_relative.as_posix()
+            try:
+                if entry.is_symlink():
+                    raise UnsupportedEntryError(f"symbolic link is unsupported: {key}")
+                if entry.is_dir(follow_symlinks=False):
+                    entries[key] = ("directory", 0, "")
+                    visit(Path(entry.path), child_relative)
+                elif entry.is_file(follow_symlinks=False):
+                    digest = hashlib.sha256()
+                    size = 0
+                    with open(entry.path, "rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                            size += len(chunk)
+                    entries[key] = ("file", size, digest.hexdigest())
+                else:
+                    raise UnsupportedEntryError(f"unsupported filesystem entry: {key}")
+            except OSError as exc:
+                raise OSError(f"cannot inspect {entry.path}: {exc}") from exc
+
+    visit(root, Path("."))
+    return entries
+
+
+def classify_savedata(source_path: str | Path) -> Dict[str, object]:
+    """Classify an explicit savedata directory without writing to it."""
+
+    source = Path(source_path)
+    result: Dict[str, object] = {"path": str(source), "state": "missing"}
+    try:
+        if source.is_symlink():
+            result.update({"state": "unsupported", "reason": "savedata symlink is unsupported"})
+            return result
+        if not source.exists():
+            result["reason"] = "savedata directory is missing"
+            return result
+        if not source.is_dir():
+            result.update({"state": "invalid", "reason": "savedata path is not a directory"})
+            return result
+        snapshot = _snapshot_tree(source)
+    except PermissionError as exc:
+        result.update({"state": "unreadable", "reason": f"savedata is unreadable: {exc}"})
+        return result
+    except UnsupportedEntryError as exc:
+        result.update({"state": "unsupported", "reason": str(exc)})
+        return result
+    except OSError as exc:
+        result.update({"state": "unreadable", "reason": str(exc)})
+        return result
+
+    if snapshot:
+        result.update({"state": "populated", "reason": "savedata contains entries"})
+    else:
+        result.update({"state": "empty", "reason": "savedata directory exists but is empty"})
+    return result
+
+
+def _compare_trees(source: Path, destination: Path) -> Dict[str, object]:
+    try:
+        source_snapshot = _snapshot_tree(source)
+        destination_snapshot = _snapshot_tree(destination)
+    except UnsupportedEntryError as exc:
+        return {
+            "status": "blocked",
+            "missing": [],
+            "extra": [],
+            "mismatch": [],
+            "reason": str(exc),
+        }
+    except OSError as exc:
+        return {
+            "status": "blocked",
+            "missing": [],
+            "extra": [],
+            "mismatch": [],
+            "reason": f"cannot compare backup trees: {exc}",
+        }
+
+    source_keys = set(source_snapshot)
+    destination_keys = set(destination_snapshot)
+    missing = sorted(source_keys - destination_keys)
+    extra = sorted(destination_keys - source_keys)
+    mismatch = sorted(
+        key
+        for key in source_keys & destination_keys
+        if source_snapshot[key] != destination_snapshot[key]
+    )
+    if missing or extra or mismatch:
+        return {
+            "status": "mismatch",
+            "missing": missing,
+            "extra": extra,
+            "mismatch": mismatch,
+            "reason": "source and destination trees differ",
+        }
+    return {
+        "status": "equal",
+        "missing": [],
+        "extra": [],
+        "mismatch": [],
+        "reason": "source and destination trees are identical",
+    }
+
+
+def _backup_result(game_dir: Path, source: Path, destination: Path) -> Dict[str, object]:
+    return {
+        "operation": "backup-savedata",
+        "game_dir": str(game_dir),
+        "source": str(source),
+        "destination": str(destination),
+        "source_state": "unknown",
+        "copy": {"status": "not-run", "success": False},
+        "comparison": {"status": "not-run"},
+        "backup_verified": False,
+        "deletion_authority": False,
+        "mutation": False,
+        "result": "blocked",
+        "reason": "not-run",
+    }
+
+
+def _destination_inside_game(game_dir: Path, destination: Path) -> bool:
+    game_real = game_dir.resolve(strict=False)
+    destination_real = destination.resolve(strict=False)
+    return destination_real == game_real or game_real in destination_real.parents
+
+
+def _copy_savedata(source: Path, destination: Path) -> None:
+    shutil.copytree(source, destination)
+
+
+def backup_savedata(
+    game_dir_path: str | Path,
+    destination_path: str | Path,
+    copy_fn: Optional[Callable[[Path, Path], object]] = None,
+) -> Dict[str, object]:
+    """Create and independently verify a savedata backup.
+
+    ``copy_fn`` is an internal test seam.  The CLI always uses the standard
+    copytree implementation; tests can model partial copies and failed copy
+    statuses against this same production transaction.
+    """
+
+    game_dir = Path(game_dir_path)
+    source = game_dir / "savedata"
+    destination = Path(destination_path)
+    result = _backup_result(game_dir, source, destination)
+    source_info = classify_savedata(source)
+    result["source_state"] = source_info["state"]
+    if source_info["state"] not in ("empty", "populated"):
+        result["reason"] = source_info.get("reason", "savedata source policy rejected")
+        return result
+
+    try:
+        if _destination_inside_game(game_dir, destination):
+            result["reason"] = "backup destination is inside GAME_DIR"
+            return result
+    except (OSError, RuntimeError) as exc:
+        result["reason"] = f"cannot resolve backup paths: {exc}"
+        return result
+
+    if destination.exists() or destination.is_symlink():
+        result["reason"] = "backup destination already exists"
+        return result
+
+    copier = copy_fn or _copy_savedata
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copy_outcome = copier(source, destination)
+        if copy_outcome is False:
+            raise RuntimeError("copy operation reported failure")
+        result["mutation"] = True
+        result["copy"] = {"status": "succeeded", "success": True}
+    except Exception as exc:
+        result["mutation"] = True
+        result["copy"] = {"status": "failed", "success": False}
+        result["reason"] = f"copy operation failed: {exc}"
+        return result
+
+    if not destination.exists() or not destination.is_dir():
+        result["reason"] = "backup destination was not created as a directory"
+        return result
+
+    comparison = _compare_trees(source, destination)
+    result["comparison"] = comparison
+    if comparison["status"] != "equal":
+        result["reason"] = comparison.get("reason", "backup comparison failed")
+        return result
+
+    result.update(
+        {
+            "backup_verified": True,
+            "result": "success",
+            "reason": "backup copied and independently verified",
+        }
+    )
+    return result
+
+
+def inspect_install(
+    game_dir_path: str | Path,
+    apps_dir_path: Optional[str | Path] = None,
+) -> Dict[str, object]:
+    """Inspect only explicitly supplied paths and never mutate them."""
+
+    game_dir = Path(game_dir_path)
+    setup = game_dir / "setup.exe"
+    savedata = game_dir / "savedata"
+    fcom = check_fcom(setup)
+    evidence: Dict[str, object] = {
+        "game_dir_exists": game_dir.is_dir(),
+        "uaro_exe_exists": (game_dir / "uaRO.exe").is_file(),
+        "setup_exe_exists": setup.is_file(),
+        "fcom": {
+            "state": fcom.get("state", "UNKNOWN"),
+            "site_a": fcom.get("site_a", "unavailable"),
+            "site_b": fcom.get("site_b", "unavailable"),
+            "result": fcom.get("result", "blocked"),
+            "reason": fcom.get("reason", "not observed"),
+        },
+        "savedata": classify_savedata(savedata),
+        "optioninfo_lua_exists": (savedata / "OptionInfo.lua").is_file(),
+        "dinput_ini_exists": (game_dir / "dinput.ini").is_file(),
+    }
+
+    if apps_dir_path is None:
+        apps: Optional[Dict[str, object]] = None
+    else:
+        apps_dir = Path(apps_dir_path)
+        apps = {}
+        for name, required in (
+            ("UaRO Patcher.app", True),
+            ("UaRO Settings.app", True),
+            ("UaRO Game.app", False),
+        ):
+            apps[name] = {
+                "exists": (apps_dir / name).is_dir(),
+                "required": required,
+                "structural_only": True,
+            }
+
+    return {
+        "operation": "inspect",
+        "game_dir": str(game_dir),
+        "apps_dir": str(apps_dir_path) if apps_dir_path is not None else None,
+        "evidence": evidence,
+        "apps": apps,
+        "evidence_scope": "explicit structural facts only",
+        "execution": "UNCONFIRMED",
+        "mutation": False,
+        "deletion_authority": False,
+        "result": "success",
+        "reason": "inspection completed without mutation",
+    }
+
+
 def _emit(result: Dict[str, object]) -> int:
     print(json.dumps(result, sort_keys=True))
     return 0 if result.get("result") == "success" else 1
@@ -207,12 +480,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     check.add_argument("target")
     apply = fcom_subparsers.add_parser("apply", help="apply and verify the two-site patch")
     apply.add_argument("target")
+    backup = subparsers.add_parser("backup", help="deterministic backup operations")
+    backup_subparsers = backup.add_subparsers(dest="backup_operation", required=True)
+    savedata = backup_subparsers.add_parser("savedata", help="copy and verify savedata")
+    savedata.add_argument("--game-dir", required=True)
+    savedata.add_argument("--destination", required=True)
+    inspect = subparsers.add_parser("inspect", help="inspect explicit paths without mutation")
+    inspect.add_argument("--game-dir", required=True)
+    inspect.add_argument("--apps-dir")
     args = parser.parse_args(argv)
 
     if args.area == "fcom" and args.operation == "check":
         return _emit(check_fcom(args.target))
     if args.area == "fcom" and args.operation == "apply":
         return _emit(apply_fcom(args.target))
+    if args.area == "backup" and args.backup_operation == "savedata":
+        return _emit(backup_savedata(args.game_dir, args.destination))
+    if args.area == "inspect":
+        return _emit(inspect_install(args.game_dir, args.apps_dir))
     parser.error("unsupported operation")
     return 2
 
