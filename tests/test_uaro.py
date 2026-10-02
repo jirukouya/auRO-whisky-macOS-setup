@@ -68,6 +68,7 @@ class FcomSpikeTests(unittest.TestCase):
         before = hashlib.sha256(target.read_bytes()).digest()
         result = uaro.check_fcom(target)
         self.assertEqual(result["state"], "UNPATCHED")
+        self.assertEqual(result["capability"], "READ")
         self.assertEqual(result["site_a"], "unpatched")
         self.assertEqual(result["site_b"], "unpatched")
         self.assertFalse(result["mutation"])
@@ -78,6 +79,7 @@ class FcomSpikeTests(unittest.TestCase):
         target = self.target(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
         result = uaro.check_fcom(target)
         self.assertEqual(result["state"], "PATCHED")
+        self.assertEqual(result["capability"], "READ")
         self.assertEqual(result["result"], "success")
         self.assertFalse(result["mutation"])
 
@@ -122,6 +124,7 @@ class FcomSpikeTests(unittest.TestCase):
         result = uaro.apply_fcom(target)
         self.assertEqual(result["result"], "success")
         self.assertEqual(result["pre_state"], "UNPATCHED")
+        self.assertEqual(result["capability"], "REVERSIBLE_MUTATION")
         self.assertEqual(result["post_state"], "PATCHED")
         self.assertTrue(result["mutation"])
         self.assertTrue(result["backup_created"])
@@ -141,6 +144,7 @@ class FcomSpikeTests(unittest.TestCase):
         result = uaro.apply_fcom(target)
         self.assertEqual(result["result"], "success")
         self.assertEqual(result["reason"], "already patched; no-op")
+        self.assertEqual(result["capability"], "REVERSIBLE_MUTATION")
         self.assertFalse(result["mutation"])
         self.assertFalse(result["backup_created"])
         self.assertEqual(target.read_bytes(), original)
@@ -322,6 +326,7 @@ class SavedataBackupTests(unittest.TestCase):
 
     def assert_verified(self, result: dict[str, object], source_state: str) -> None:
         self.assertEqual(result["result"], "success")
+        self.assertEqual(result["capability"], "REVERSIBLE_MUTATION")
         self.assertEqual(result["source_state"], source_state)
         self.assertTrue(result["backup_verified"])
         self.assertFalse(result["deletion_authority"])
@@ -514,6 +519,7 @@ class InspectTests(unittest.TestCase):
         (game / "savedata" / "OptionInfo.lua").write_text("options")
         result = self.inspect(game)
         evidence = result["evidence"]
+        self.assertEqual(result["capability"], "READ")
         self.assertTrue(evidence["game_dir_exists"])
         self.assertTrue(evidence["uaro_exe_exists"])
         self.assertFalse(evidence["setup_exe_exists"])

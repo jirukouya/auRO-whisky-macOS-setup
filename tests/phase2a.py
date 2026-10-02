@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -77,15 +78,22 @@ def shared_readonly_block() -> str:
 def fcom_route_block() -> str:
     section = step8_section()
     start = section.index("### Read-only FCOM classification")
-    end = section.index("### Existing FCOM mutation route", start)
+    end = section.index("### Deterministic FCOM mutation", start)
     return fenced_after(section[start:end], "bash")
 
 
-def legacy_fcom_mutation_block() -> str:
+def fcom_apply_route_block() -> str:
     section = step8_section()
-    start = section.index("### Existing FCOM mutation route")
+    start = section.index("### Deterministic FCOM mutation")
     end = section.index("### Explicit structural target inspection", start)
     return fenced_after(section[start:end], "bash")
+
+
+def step11_section() -> str:
+    text = skill_text()
+    start = text.index("## Step 11 — Build the three launcher .app bundles")
+    end = text.index("## Optional: uaro-cli command-line helper", start)
+    return text[start:end]
 
 
 def inspect_route_block() -> str:
@@ -188,7 +196,7 @@ def run_fcom_pipeline(
         setup.write_bytes(data)
         if backup is not None:
             backup_path.write_bytes(backup)
-        script = readonly_shell(fcom_route_block()) + "\n" + legacy_fcom_mutation_block()
+        script = readonly_shell(fcom_route_block()) + "\n" + fcom_apply_route_block()
         proc = run_zsh(
             script,
             {
@@ -239,9 +247,120 @@ def run_fake_fcom_executor(
         )
 
 
+FAKE_FCOM_EXECUTOR = r'''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+operation = sys.argv[2]
+target = sys.argv[3]
+name = operation.upper()
+count_path = Path(__file__).with_name(f".{operation}-count")
+count = int(count_path.read_text()) if count_path.exists() else 0
+count_path.write_text(str(count + 1))
+
+raw_sequence = json.loads(os.environ.get(f"FAKE_{name}_RAW_SEQUENCE", "[]"))
+if count < len(raw_sequence) and raw_sequence[count] is not None:
+    print(raw_sequence[count])
+else:
+    payload = json.loads(os.environ[f"FAKE_{name}_JSON"])
+    if operation == "check":
+        states = json.loads(os.environ.get("FAKE_CHECK_STATES", "[]"))
+        if count < len(states):
+            payload["state"] = states[count]
+            payload["site_a"] = "patched" if states[count] == "PATCHED" else "unpatched"
+            payload["site_b"] = "patched" if states[count] == "PATCHED" else "unpatched"
+    target_modes = json.loads(os.environ.get(f"FAKE_{name}_TARGETS", "[]"))
+    target_mode = target_modes[count] if count < len(target_modes) else os.environ.get(f"FAKE_{name}_TARGET", "actual")
+    if target_mode == "wrong":
+        payload["target"] = target + ".wrong"
+    elif "target" in payload:
+        payload["target"] = target
+    print(json.dumps(payload, sort_keys=True))
+
+exit_values = json.loads(os.environ.get(f"FAKE_{name}_EXITS", "[]"))
+if count < len(exit_values):
+    raise SystemExit(exit_values[count])
+raise SystemExit(int(os.environ.get(f"FAKE_{name}_EXIT", "0")))
+'''
+
+
+def run_fake_fcom_pipeline(
+    executor: str,
+    data: bytes,
+    check_payload: Dict[str, object],
+    apply_payload: Dict[str, object],
+    origin: str = EXPECTED_ORIGIN,
+    extra_env: Optional[Dict[str, str]] = None,
+) -> Tuple[subprocess.CompletedProcess[str], bytes, Optional[bytes], int, int]:
+    with tempfile.TemporaryDirectory(prefix="phase2a-fcom-pipeline-fake-") as temp:
+        root = Path(temp)
+        fake_repo = make_fake_repo(root / "fake-repo", executor, origin=origin)
+        game = root / "game dir with spaces"
+        game.mkdir()
+        setup = game / "setup.exe"
+        backup_path = game / "setup.exe.orig-backup"
+        setup.write_bytes(data)
+        env = {
+            "GAME_DIR": str(game),
+            "AURO_REPO_ROOT": str(fake_repo),
+            "FAKE_CHECK_JSON": json.dumps(check_payload),
+            "FAKE_APPLY_JSON": json.dumps(apply_payload),
+        }
+        if extra_env:
+            env.update(extra_env)
+        script = readonly_shell(fcom_route_block()) + "\n" + fcom_apply_route_block()
+        proc = run_zsh(script, env, cwd=root)
+        apply_count_path = fake_repo / "scripts" / ".apply-count"
+        check_count_path = fake_repo / "scripts" / ".check-count"
+        apply_count = int(apply_count_path.read_text()) if apply_count_path.exists() else 0
+        check_count = int(check_count_path.read_text()) if check_count_path.exists() else 0
+        final = setup.read_bytes()
+        saved_backup = backup_path.read_bytes() if backup_path.exists() else None
+        return proc, final, saved_backup, apply_count, check_count
+
+
+def valid_fake_check(state: str = "UNPATCHED") -> Dict[str, object]:
+    site_a = "patched" if state == "PATCHED" else "unpatched"
+    site_b = "patched" if state == "PATCHED" else "unpatched"
+    return {
+        "operation": "fcom-check",
+        "capability": "READ",
+        "target": "placeholder",
+        "site_a": site_a,
+        "site_b": site_b,
+        "state": state,
+        "pre_state": state,
+        "post_state": state,
+        "backup_created": False,
+        "mutation": False,
+        "verification": "not-run",
+        "result": "success",
+        "reason": "classified",
+    }
+
+
+def valid_fake_apply(pre_state: str = "UNPATCHED", post_state: str = "PATCHED") -> Dict[str, object]:
+    return {
+        "operation": "fcom-apply",
+        "capability": "REVERSIBLE_MUTATION",
+        "target": "placeholder",
+        "site_a": "patched",
+        "site_b": "patched",
+        "state": pre_state,
+        "pre_state": pre_state,
+        "post_state": post_state,
+        "backup_created": pre_state == "UNPATCHED",
+        "mutation": pre_state == "UNPATCHED",
+        "verification": "passed",
+        "result": "success",
+        "reason": "patched and verified" if pre_state == "UNPATCHED" else "already patched; no-op",
+    }
+
+
 def test_fcom_states() -> None:
     route = fcom_route_block()
-    legacy = legacy_fcom_mutation_block()
     require('python3 "$AURO_EXECUTOR" fcom check "$SETUP"' in route, "FCOM route does not invoke the deterministic executor")
     require("resolve_uaro_executor" in route, "FCOM route does not resolve the executor")
     require("remote.origin.url" in shared_readonly_block(), "executor resolver does not validate repository identity")
@@ -249,8 +368,6 @@ def test_fcom_states() -> None:
     require("fcom apply" not in route, "FCOM mutation command was integrated into the read-only route")
     for duplicate in ("shutil.copy2", "setup.write_bytes", "def read_site", "expected_offsets", "SITE_A_OFFSET"):
         require(duplicate not in route, f"duplicate executable FCOM classifier remains in read-only route: {duplicate}")
-    for required in ("shutil.copy2", "setup.write_bytes", "def read_site", "expected_offsets", "SITE_A_OFFSET"):
-        require(required in legacy, f"existing Step 8 mutation route is missing: {required}")
     require("UNPATCHED" in route and "mutation authority remains denied" in route, "UNPATCHED evidence boundary is missing")
     require("MIXED|UNKNOWN|TRUNCATED" in route, "FCOM fail-closed state handling is missing")
 
@@ -287,20 +404,156 @@ def test_fcom_states() -> None:
     require(saved_backup == bytes(preserved), "existing original backup was modified")
 
 
-def test_fcom_legacy_mutation_route() -> None:
+def test_fcom_deterministic_mutation_route() -> None:
     section = step8_section()
-    legacy = legacy_fcom_mutation_block()
-    require("temporary pre-Stage-2 path" in section, "temporary production mutation route is not documented")
-    require("Do not substitute the later Settings launcher" in section, "Step 11 was not distinguished from Step 8 mutation")
+    apply_route = fcom_apply_route_block()
+    require("fcom apply" in apply_route, "Step 8 does not invoke deterministic fcom apply")
+    require("independent post-apply FCOM check" in apply_route, "Step 8 does not require an independent post-apply check")
+    require("inline shell patch" in section, "Step 8 does not prohibit a legacy mutation fallback")
+    require("shutil.copy2" not in apply_route and "setup.write_bytes" not in apply_route, "active Step 8 route still contains legacy byte mutation logic")
 
     original = fixture_binary(A_UNPATCHED, B_UNPATCHED)
     proc, final, backup = run_fcom_pipeline(original, cwd=Path(tempfile.gettempdir()))
     require(proc.returncode == 0, f"read-only check plus existing mutation route failed: {report_process(proc)}")
     require("mutation authority remains denied" in proc.stdout, "read-only check output did not remain evidence-only")
-    require("FCOM patch applied and verified" in proc.stdout, "existing Step 8 mutation route did not run")
-    require(final[A_OFFSET:A_OFFSET + 1] == A_PATCHED, "existing Step 8 mutation did not patch Site A")
-    require(final[B_OFFSET:B_OFFSET + 4] == B_PATCHED, "existing Step 8 mutation did not patch Site B")
-    require(backup == original, "existing Step 8 mutation did not preserve the original backup")
+    require("FCOM apply succeeded and independent PATCHED check passed" in proc.stdout, "deterministic Step 8 mutation route did not complete")
+    require(final[A_OFFSET:A_OFFSET + 1] == A_PATCHED, "deterministic Step 8 mutation did not patch Site A")
+    require(final[B_OFFSET:B_OFFSET + 4] == B_PATCHED, "deterministic Step 8 mutation did not patch Site B")
+    require(backup == original, "deterministic Step 8 mutation did not preserve the original backup")
+
+
+def test_fcom_cutover_contract() -> None:
+    original = fixture_binary(A_UNPATCHED, B_UNPATCHED)
+    patched = fixture_binary(A_PATCHED, B_PATCHED)
+
+    def run_case(
+        check_state: str = "UNPATCHED",
+        apply_payload: Optional[Dict[str, object]] = None,
+        check_states: Optional[list[str]] = None,
+        extra_env: Optional[Dict[str, str]] = None,
+        data: bytes = original,
+    ) -> Tuple[subprocess.CompletedProcess[str], bytes, Optional[bytes], int, int]:
+        return run_fake_fcom_pipeline(
+            FAKE_FCOM_EXECUTOR,
+            data,
+            valid_fake_check(check_state),
+            apply_payload or valid_fake_apply(),
+            extra_env={
+                **({"FAKE_CHECK_STATES": json.dumps(check_states)} if check_states is not None else {}),
+                **(extra_env or {}),
+            },
+        )
+
+    proc, final, backup, apply_count, check_count = run_case(
+        check_state="PATCHED",
+        apply_payload=valid_fake_apply(),
+        extra_env={"FAKE_APPLY_EXIT": "17"},
+        data=patched,
+    )
+    require(proc.returncode == 0, f"PATCHED initial state did not no-op: {report_process(proc)}")
+    require(apply_count == 0, "PATCHED initial state invoked fcom apply")
+    require(check_count == 1, "PATCHED initial state did not perform exactly one check")
+    require(final == patched and backup is None, "PATCHED no-op changed target or created backup")
+
+    proc, final, backup, apply_count, check_count = run_case(
+        check_states=["UNPATCHED", "PATCHED"],
+    )
+    require(proc.returncode == 0, f"authorized UNPATCHED route failed: {report_process(proc)}")
+    require(apply_count == 1 and check_count == 2, "authorized route did not run apply plus independent post-check")
+    require(backup is None and final == original, "fake evidence route performed an unexpected fixture mutation")
+
+    no_op_apply = valid_fake_apply(pre_state="PATCHED", post_state="PATCHED")
+    proc, _, _, apply_count, check_count = run_case(
+        apply_payload=no_op_apply,
+        check_states=["UNPATCHED", "PATCHED"],
+    )
+    require(proc.returncode == 0 and apply_count == 1 and check_count == 2, "valid executor no-op after an external state change did not require independent PATCHED confirmation")
+
+    apply_disagreement = valid_fake_apply()
+    apply_disagreement["result"] = "success"
+    proc, _, _, apply_count, check_count = run_case(
+        apply_payload=apply_disagreement,
+        extra_env={"FAKE_APPLY_EXITS": json.dumps([7])},
+    )
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "JSON success with nonzero apply exit was accepted")
+
+    for state in ("UNKNOWN", "MIXED", "TRUNCATED"):
+        proc, _, _, apply_count, check_count = run_case(
+            check_state=state,
+            extra_env={"FAKE_APPLY_EXIT": "17"},
+        )
+        require(proc.returncode != 0, f"{state} initial state unexpectedly passed")
+        require(apply_count == 0 and check_count == 1, f"{state} invoked apply or repeated the initial check")
+
+    proc, _, _, apply_count, check_count = run_case(extra_env={"FAKE_CHECK_EXIT": "7"})
+    require(proc.returncode != 0 and apply_count == 0 and check_count == 1, "initial check nonzero was not fail-closed")
+
+    proc, _, _, apply_count, check_count = run_case(extra_env={"FAKE_CHECK_TARGET": "wrong"})
+    require(proc.returncode != 0 and apply_count == 0 and check_count == 1, "initial check wrong target was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(
+        extra_env={"FAKE_CHECK_RAW_SEQUENCE": json.dumps(["not-json"])}
+    )
+    require(proc.returncode != 0 and apply_count == 0 and check_count == 1, "initial malformed JSON was not fail-closed")
+
+    proc, _, _, apply_count, check_count = run_case(extra_env={"FAKE_APPLY_EXIT": "7"})
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "apply nonzero was not fail-closed")
+
+    proc, _, _, apply_count, check_count = run_case(
+        extra_env={"FAKE_APPLY_RAW_SEQUENCE": json.dumps(["not-json"])}
+    )
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "apply zero exit with malformed JSON was not fail-closed")
+
+    incomplete = {"operation": "fcom-apply", "capability": "REVERSIBLE_MUTATION", "target": "placeholder", "result": "success", "mutation": True}
+    proc, _, _, apply_count, check_count = run_case(apply_payload=incomplete)
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "incomplete apply JSON was accepted")
+
+    wrong_operation = valid_fake_apply()
+    wrong_operation["operation"] = "fcom-check"
+    proc, _, _, apply_count, check_count = run_case(apply_payload=wrong_operation)
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "wrong apply operation was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(extra_env={"FAKE_APPLY_TARGET": "wrong"})
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "wrong apply target was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(
+        check_states=["UNPATCHED", "PATCHED"],
+        extra_env={"FAKE_CHECK_TARGETS": json.dumps(["actual", "wrong"])},
+    )
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 2, "wrong independent post-check target was accepted")
+
+    wrong_capability = valid_fake_apply()
+    wrong_capability["capability"] = "READ"
+    proc, _, _, apply_count, check_count = run_case(apply_payload=wrong_capability)
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "wrong apply capability was accepted")
+
+    nonpatched = valid_fake_apply(post_state="UNPATCHED")
+    proc, _, _, apply_count, check_count = run_case(apply_payload=nonpatched)
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 1, "apply success with non-PATCHED final state was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(check_states=["UNPATCHED", "UNKNOWN"])
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 2, "non-PATCHED independent post-check was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(
+        check_states=["UNPATCHED", "PATCHED"],
+        extra_env={"FAKE_CHECK_RAW_SEQUENCE": json.dumps([None, "not-json"])},
+    )
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 2, "malformed independent post-check was accepted")
+
+    proc, _, _, apply_count, check_count = run_case(
+        check_states=["UNPATCHED", "PATCHED"],
+        extra_env={"FAKE_CHECK_EXITS": json.dumps([0, 7])},
+    )
+    require(proc.returncode != 0 and apply_count == 1 and check_count == 2, "nonzero independent post-check was accepted")
+
+    section = step8_section()
+    apply_route = fcom_apply_route_block()
+    require("setup.write_bytes" not in apply_route and "shutil.copy2" not in apply_route, "legacy Step 8 mutation HOW remains active")
+    require("fcom apply" in apply_route and apply_route.count("fcom check") >= 1, "deterministic apply/check route is incomplete")
+    require("fcom apply" not in fcom_route_block(), "initial read-only route became self-authorizing")
+    require("SAVEDATA_BACKUP_VERIFIED" not in section, "savedata routing was integrated into Step 8")
+    step11 = step11_section()
+    require("_patch_setup_exe" in step11 and "return 0" in step11, "Step 11 inline FCOM logic was unexpectedly changed")
 
 
 def test_readonly_executor_integrity() -> None:
@@ -718,7 +971,7 @@ def test_uaro_cli() -> None:
 
 
 def test_scope() -> None:
-    allowed = {"SKILL.md", "tests/phase2a.py", "tests/test_uaro.py"}
+    allowed = {"SKILL.md", "scripts/uaro.py", "tests/phase2a.py", "tests/test_uaro.py"}
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
@@ -742,7 +995,8 @@ def run_all() -> int:
     tests = (
         ("F-01 verify-only boundary", test_verify_only_boundary),
         ("F-02 read-only executor routing", test_fcom_states),
-        ("F-02 existing mutation route", test_fcom_legacy_mutation_route),
+        ("F-02 deterministic mutation route", test_fcom_deterministic_mutation_route),
+        ("Stage 2.1 FCOM cutover contract", test_fcom_cutover_contract),
         ("Stage 1 executor integrity", test_readonly_executor_integrity),
         ("F-03 execution gate", test_execution_gate),
         ("F-05 uaro-cli false-success", test_uaro_cli),

@@ -58,8 +58,10 @@ def _whole_state(site_a: str, site_b: str) -> str:
 
 
 def _target_record(target: Path, operation: str) -> Dict[str, object]:
+    capability = "READ" if operation == "fcom-check" else "REVERSIBLE_MUTATION"
     return {
         "operation": operation,
+        "capability": capability,
         "target": str(target),
         "backup": str(target.with_name(target.name + ".orig-backup")),
         "mutation": False,
@@ -478,6 +480,7 @@ def _compare_trees(source: Path, destination: Path) -> Dict[str, object]:
 def _backup_result(game_dir: Path, source: Path, destination: Path) -> Dict[str, object]:
     return {
         "operation": "backup-savedata",
+        "capability": "REVERSIBLE_MUTATION",
         "game_dir": str(game_dir),
         "source": str(source),
         "destination": str(destination),
@@ -614,6 +617,7 @@ def inspect_install(
 
     return {
         "operation": "inspect",
+        "capability": "READ",
         "game_dir": str(game_dir),
         "apps_dir": str(apps_dir_path) if apps_dir_path is not None else None,
         "evidence": evidence,

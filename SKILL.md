@@ -635,8 +635,11 @@ validate_uaro_json() {
   local expected_operation="$2"
   local expected_path_key="$3"
   local expected_path="$4"
-  python3 - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" <<'PYEOF'
+  local expected_capability="${5:-}"
+  local validation_mode="${6:-readonly}"
+  python3 - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" "$expected_capability" "$validation_mode" <<'PYEOF'
 import json
+import os
 import sys
 
 try:
@@ -650,7 +653,9 @@ if not isinstance(payload, dict):
 expected_operation = sys.argv[2]
 expected_path_key = sys.argv[3]
 expected_path = sys.argv[4]
-missing = [key for key in ("operation", "result", "mutation") if key not in payload]
+expected_capability = sys.argv[5]
+validation_mode = sys.argv[6]
+missing = [key for key in ("operation", "capability", "result", "mutation") if key not in payload]
 if missing:
     print(f"BLOCKED: deterministic executor JSON is incomplete: missing {missing}", file=sys.stderr)
     raise SystemExit(1)
@@ -660,12 +665,25 @@ if payload["operation"] != expected_operation:
 if payload["result"] != "success":
     print("BLOCKED: deterministic executor did not report success", file=sys.stderr)
     raise SystemExit(1)
-if payload["mutation"] is not False:
+if validation_mode == "readonly" and payload["mutation"] is not False:
     print("BLOCKED: read-only executor result did not prove mutation=false", file=sys.stderr)
     raise SystemExit(1)
-if expected_path_key and payload.get(expected_path_key) != expected_path:
-    print("BLOCKED: deterministic executor result names a different target", file=sys.stderr)
+if validation_mode == "apply" and not isinstance(payload["mutation"], bool):
+    print("BLOCKED: mutation executor result did not provide a boolean mutation field", file=sys.stderr)
     raise SystemExit(1)
+if expected_capability and payload.get("capability") != expected_capability:
+    print("BLOCKED: deterministic executor returned an unexpected capability", file=sys.stderr)
+    raise SystemExit(1)
+if expected_path_key:
+    reported_path = payload.get(expected_path_key)
+    if not isinstance(reported_path, str):
+        print("BLOCKED: deterministic executor result omitted the expected target path", file=sys.stderr)
+        raise SystemExit(1)
+    reported_real = os.path.realpath(os.path.abspath(reported_path))
+    expected_real = os.path.realpath(os.path.abspath(expected_path))
+    if reported_real != expected_real:
+        print("BLOCKED: deterministic executor result names a different target", file=sys.stderr)
+        raise SystemExit(1)
 print(json.dumps(payload, sort_keys=True))
 PYEOF
 }
@@ -683,7 +701,7 @@ if ! CHECK_JSON="$(python3 "$AURO_EXECUTOR" fcom check "$SETUP")"; then
   echo "BLOCKED: deterministic FCOM check failed" >&2
   exit 1
 fi
-if ! CHECK_JSON="$(validate_uaro_json "$CHECK_JSON" "fcom-check" "target" "$SETUP")"; then
+if ! CHECK_JSON="$(validate_uaro_json "$CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
   exit 1
 fi
 if ! CHECK_STATE="$(python3 - "$CHECK_JSON" <<'PYEOF'
@@ -702,6 +720,12 @@ if missing:
     raise SystemExit(1)
 if payload["state"] not in ("UNPATCHED", "PATCHED", "MIXED", "UNKNOWN", "TRUNCATED"):
     print("BLOCKED: unexpected FCOM state", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "UNPATCHED" and (payload["site_a"] != "unpatched" or payload["site_b"] != "unpatched"):
+    print("BLOCKED: FCOM check state and site evidence disagree", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "PATCHED" and (payload["site_a"] != "patched" or payload["site_b"] != "patched"):
+    print("BLOCKED: FCOM check state and site evidence disagree", file=sys.stderr)
     raise SystemExit(1)
 if payload["backup_created"] is not False or payload["verification"] != "not-run":
     print("BLOCKED: read-only FCOM evidence contains mutation or backup claims", file=sys.stderr)
@@ -732,146 +756,102 @@ esac
 
 If the executor is missing, cannot be resolved, exits nonzero, returns malformed or incomplete JSON, or names a different target, stop. Do not fall back to a shell byte classifier. The executor's structured result is evidence only; it does not prove process execution, launcher behavior, patch freshness, or user authority.
 
-### Existing FCOM mutation route (temporary pre-Stage-2 path)
+### Deterministic FCOM mutation
 
-For a fresh or adopted install, run this existing approved mutation block directly after the read-only check above, in the same shell invocation. The check's `UNPATCHED` output is evidence only; this block remains the temporary production mutation mechanism until the deterministic mutation command is integrated in Stage 2. It reclassifies both sites before creating or validating the backup, refuses unknown/mixed/truncated context, preserves an existing valid backup, and verifies the exact final diff. Do not substitute the later Settings launcher for this Step 8 route.
+For a fresh or adopted install, run this block after the read-only check above in the same shell invocation and only after the existing Step 8 approval/authority decision for that install route. The initial `UNPATCHED` result is evidence that mutation may be needed; it is not mutation authority. This existing Step 8 authority gate permits the deterministic executor to perform the one active mutation transaction. `fcom apply` owns backup creation, target identity checks, exact writes, and verification. If it fails, block; do not fall back to an inline shell patch or the later Settings launcher.
 
 ```bash
-SETUP="$GAME_DIR/setup.exe"
-BACKUP="$SETUP.orig-backup"
-
-python3 - "$SETUP" "$BACKUP" <<'PYEOF'
-from pathlib import Path
-import shutil
+if [[ "$CHECK_STATE" == "PATCHED" ]]; then
+  echo "TARGET FCOM evidence: PATCHED; no mutation needed"
+elif [[ "$CHECK_STATE" == "UNPATCHED" ]]; then
+  if ! APPLY_JSON="$(python3 "$AURO_EXECUTOR" fcom apply "$SETUP")"; then
+    echo "BLOCKED: deterministic FCOM apply failed" >&2
+    exit 1
+  fi
+  if ! APPLY_JSON="$(validate_uaro_json "$APPLY_JSON" "fcom-apply" "target" "$SETUP" "REVERSIBLE_MUTATION" "apply")"; then
+    exit 1
+  fi
+  if ! APPLY_STATE="$(python3 - "$APPLY_JSON" <<'PYEOF'
+import json
 import sys
 
-setup = Path(sys.argv[1])
-backup = Path(sys.argv[2])
-
-SITE_A_OFFSET = 0x2C0CD
-SITE_B_OFFSET = 0x21E39
-A_UNPATCHED = bytes.fromhex("dc")
-A_PATCHED = bytes.fromhex("d8")
-B_UNPATCHED = bytes.fromhex("dcd8dfe0")
-B_PATCHED = bytes.fromhex("ddd8b440")
-
-def read_site(data, offset, size):
-    value = data[offset:offset + size]
-    return value if len(value) == size else None
-
-def abort(message):
-    print(message)
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed FCOM apply evidence: {exc}", file=sys.stderr)
     raise SystemExit(1)
-
-if not setup.is_file():
-    abort(f"setup.exe is missing: {setup}")
-
-try:
-    original = setup.read_bytes()
-except OSError as exc:
-    abort(f"Cannot read setup.exe: {exc}")
-
-site_a = read_site(original, SITE_A_OFFSET, len(A_UNPATCHED))
-site_b = read_site(original, SITE_B_OFFSET, len(B_UNPATCHED))
-
-if site_a == A_UNPATCHED:
-    state_a = "unpatched"
-elif site_a == A_PATCHED:
-    state_a = "patched"
-else:
-    state_a = "unknown"
-
-if site_b == B_UNPATCHED:
-    state_b = "unpatched"
-elif site_b == B_PATCHED:
-    state_b = "patched"
-else:
-    state_b = "unknown"
-
-if state_a == "unknown" or state_b == "unknown":
-    abort(
-        "Unknown, mixed, or truncated FCOM context "
-        f"(Site A={site_a.hex() if site_a is not None else 'truncated'}, "
-        f"Site B={site_b.hex() if site_b is not None else 'truncated'}); "
-        "aborting with zero writes and no backup creation"
-    )
-
-if state_a != state_b:
-    abort(
-        f"Mixed FCOM state (Site A={state_a}, Site B={state_b}); "
-        "aborting with zero writes and no backup creation"
-    )
-
-if state_a == "patched":
-    print("Both FCOM sites are already patched; no-op")
-    raise SystemExit(0)
-
-if backup.exists():
-    try:
-        backup_bytes = backup.read_bytes()
-    except OSError as exc:
-        abort(f"Cannot read existing original backup: {exc}")
-    if len(backup_bytes) != len(original):
-        abort("Existing setup.exe backup has a different size; aborting before any write")
-    if read_site(backup_bytes, SITE_A_OFFSET, len(A_UNPATCHED)) != A_UNPATCHED:
-        abort("Existing setup.exe backup does not contain the unpatched Site A bytes")
-    if read_site(backup_bytes, SITE_B_OFFSET, len(B_UNPATCHED)) != B_UNPATCHED:
-        abort("Existing setup.exe backup does not contain the unpatched Site B bytes")
-    print(f"Preserving existing original backup: {backup}")
-else:
-    try:
-        shutil.copy2(setup, backup)
-    except OSError as exc:
-        abort(f"Cannot create original setup.exe backup: {exc}")
-    print(f"Created original setup.exe backup: {backup}")
-
-try:
-    setup.chmod(setup.stat().st_mode | 0o200)
-except OSError as exc:
-    abort(f"Cannot make setup.exe writable after validation: {exc}")
-
-patched = bytearray(original)
-patched[SITE_A_OFFSET:SITE_A_OFFSET + 1] = A_PATCHED
-patched[SITE_B_OFFSET:SITE_B_OFFSET + 4] = B_PATCHED
-
-try:
-    setup.write_bytes(patched)
-    final = setup.read_bytes()
-except OSError as exc:
-    abort(f"FCOM patch write/read-back failed: {exc}")
-
-if read_site(final, SITE_A_OFFSET, 1) != A_PATCHED:
-    abort("Site A final bytes are not exactly d8")
-if read_site(final, SITE_B_OFFSET, 4) != B_PATCHED:
-    abort("Site B final bytes are not exactly ddd8b440")
-if len(final) != len(original):
-    abort("FCOM patch changed setup.exe size")
-
-expected = bytearray(original)
-expected[SITE_A_OFFSET:SITE_A_OFFSET + 1] = A_PATCHED
-expected[SITE_B_OFFSET:SITE_B_OFFSET + 4] = B_PATCHED
-if final != bytes(expected):
-    abort("FCOM patch changed bytes outside the two approved sites")
-
-changed_offsets = {
-    index for index, (before, after) in enumerate(zip(original, final))
-    if before != after
-}
-expected_offsets = {
-    SITE_A_OFFSET,
-    SITE_B_OFFSET,
-    SITE_B_OFFSET + 2,
-    SITE_B_OFFSET + 3,
-}
-if changed_offsets != expected_offsets:
-    abort(
-        "FCOM byte diff is not exact: "
-        f"expected {sorted(expected_offsets)}, got {sorted(changed_offsets)}"
-    )
-
-print("FCOM patch applied and verified: exact final bytes and expected diff")
+required = (
+    "operation", "capability", "state", "pre_state", "post_state",
+    "site_a", "site_b", "backup_created", "mutation", "verification", "reason",
+)
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete FCOM apply evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["post_state"] != "PATCHED" or payload["state"] != payload["pre_state"]:
+    print("BLOCKED: FCOM apply did not prove a coherent PATCHED result", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: FCOM apply reported an invalid pre-state", file=sys.stderr)
+    raise SystemExit(1)
+if payload["verification"] != "passed":
+    print("BLOCKED: FCOM apply verification did not pass", file=sys.stderr)
+    raise SystemExit(1)
+if payload["reason"] not in ("patched and verified", "already patched; no-op"):
+    print("BLOCKED: FCOM apply returned an unrecognized success reason", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "UNPATCHED" and payload["mutation"] is not True:
+    print("BLOCKED: FCOM apply reported UNPATCHED without a completed mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "PATCHED" and (payload["mutation"] is not False or payload["backup_created"] is not False):
+    print("BLOCKED: FCOM no-op result claimed mutation or backup creation", file=sys.stderr)
+    raise SystemExit(1)
+print("PATCHED")
 PYEOF
+)"; then
+    exit 1
+  fi
+
+  if ! POST_CHECK_JSON="$(python3 "$AURO_EXECUTOR" fcom check "$SETUP")"; then
+    echo "BLOCKED: independent post-apply FCOM check failed" >&2
+    exit 1
+  fi
+  if ! POST_CHECK_JSON="$(validate_uaro_json "$POST_CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+    exit 1
+  fi
+  if ! python3 - "$POST_CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed post-apply FCOM evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+required = ("state", "site_a", "site_b", "backup_created", "verification", "mutation", "capability")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete post-apply FCOM evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] != "PATCHED" or payload["site_a"] != "patched" or payload["site_b"] != "patched":
+    print("BLOCKED: independent post-apply FCOM check did not prove both sites PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload["mutation"] is not False or payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: independent post-apply FCOM check was not read-only", file=sys.stderr)
+    raise SystemExit(1)
+print("PATCHED")
+PYEOF
+  then
+    exit 1
+  fi
+  echo "FCOM apply succeeded and independent PATCHED check passed"
+else
+  echo "BLOCKED: FCOM state=$CHECK_STATE; no mutation is authorized" >&2
+  exit 1
+fi
 ```
+
+A failed deterministic apply is a blocked transaction. Rollback is performed by reverting the Stage 2.1 integration commit, never by executing a legacy mutation fallback.
 
 ### Explicit structural target inspection
 
@@ -888,7 +868,7 @@ if ! INSPECT_JSON="$(python3 "$AURO_EXECUTOR" inspect --game-dir "$GAME_DIR" --a
   echo "BLOCKED: deterministic structural inspection failed" >&2
   exit 1
 fi
-if ! INSPECT_JSON="$(validate_uaro_json "$INSPECT_JSON" "inspect" "game_dir" "$GAME_DIR")"; then
+if ! INSPECT_JSON="$(validate_uaro_json "$INSPECT_JSON" "inspect" "game_dir" "$GAME_DIR" "READ" "readonly")"; then
   exit 1
 fi
 python3 - "$INSPECT_JSON" <<'PYEOF'
