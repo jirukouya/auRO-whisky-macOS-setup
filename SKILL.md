@@ -239,7 +239,7 @@ Two independent things to check here:
 - **If `/Applications/UaRO.app` exists (old name, pre-2026-07-27)**, rename it to `UaRO Patcher.app` per Step 11's current naming, updating `Info.plist` (`CFBundleName`/`CFBundleDisplayName`/`CFBundleIdentifier`/`CFBundleExecutable`) and the script filename (`uaro-launch` → `uaro-patcher`) to match, then re-sign and re-register — don't leave an install half-migrated with the old bundle name but new internal content.
 - **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
 - **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists but lacks the Launch Game handoff check** — `grep -q 'pgrep -f "uaRO.exe"' "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"` finds nothing — it has the known ghost-second-patcher bug (clicking the patcher's Launch Game button also spawns a second patcher window; see `TROUBLESHOOTING.md`). Tell the user and rebuild per Step 11's current version if they say yes, then re-sign.
-- **If `/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings` exists**, check whether it has the `return 0` guard at the end of `_patch_setup_exe`: `grep -q 'return 0' "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"`. If it doesn't, this launcher has the known silent-failure bug (it does nothing when double-clicked once `setup.exe` is already patched — the normal state; see `TROUBLESHOOTING.md`). Tell the user: *"Heads up — this install's `UaRO Settings` launcher has a known bug where it silently fails to open once the graphics tool is already patched. Want me to update it?"* Rebuild the script per Step 11's current version if they say yes, then re-sign per the standing rule below.
+- **If `/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings` exists**, verify that it contains the bundle-local runtime verifier and deterministic executor calls from Step 11 (`settings_runtime_verify.py`, `fcom apply`, and an independent `fcom check`). If any is absent, tell the user the launcher predates the deterministic Settings route and rebuild it from Step 11, then re-sign per the standing rule below.
 - **If `/Applications/UaRO Game.app` is missing (install predates 2026-07-27)**, offer to add it per Step 11's current version: *"There's now a third launcher option, `UaRO Game`, that skips the patcher for a faster relaunch — it comes with a real trade-off (see Step 11/`TROUBLESHOOTING.md`) I want you to be aware of before I add it. Want me to build it?"* Only build it if the user says yes — don't add it silently, since accepting its risk is the user's call, not a default.
 - **If `/opt/homebrew/bin/uaro-cli` is missing (install predates 2026-07-27)**, mention it's available and offer to add it per the *Optional: uaro-cli command-line helper* section below — this one carries no meaningful risk (it only wraps the kill/launch/repair operations this file already documents doing manually), so it's fine to build it as soon as the user says they'd find it useful, no special caution needed the way `UaRO Game.app` requires.
 - **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launchers too (see Step 11's standing rule on this) before moving on.
@@ -1270,55 +1270,11 @@ EOF
 
 `WINEDLLOVERRIDES` **must append**, never replace — `whisky shellenv` already exports DXVK overrides (`dxgi,d3d9,d3d10core,d3d11=n,b`); overwriting the variable disables DXVK and tanks FPS. `WINE_CPU_TOPOLOGY=4:0,1,2,3` stabilizes Gepard Shield's anti-debug CPU-detection routines (fixes crashes ~3s after login and `Gepard::T Code: 3::110::12` disconnects).
 
-`UaRO Settings.app/Contents/MacOS/uaro-settings` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, plus an idempotent re-patch of both FCOM sites (checks against the *post*-patch bytes so it skips cleanly if already done) before exec'ing `setup.exe`:
+`UaRO Settings.app/Contents/MacOS/uaro-settings` uses the same substitution rule and quoted-heredoc requirement as `uaro-patcher` above. Its only active implementation is the bundle-local route below; the former inline byte-edit launcher has been retired so a Finder launch cannot select a second FCOM mutation HOW.
 
-```bash
-cat > "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" <<'EOF'
-#!/bin/zsh
-set -e
-WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
-eval "$("$WHISKY" shellenv <BOTTLE_NAME>)"
-cd "<GAME_DIR>"
+### Stage 2.2B — bundle-local Settings route
 
-# Same stale-process cleanup as uaro-patcher -- see the comment there for why.
-wineserver -k >/dev/null 2>&1 || true
-pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
-pkill -f "uaRO.exe" >/dev/null 2>&1 || true
-pkill -f "setup.exe" >/dev/null 2>&1 || true
-sleep 1
-
-export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
-export WINE_CPU_TOPOLOGY=4:0,1,2,3
-
-_patch_setup_exe() {
-	local setup="$PWD/setup.exe"
-	[[ -f "$setup" ]] || return 0
-	chmod u+w "$setup" 2>/dev/null || true
-	local a_cur=$(dd if="$setup" bs=1 skip=$((0x2C0CD)) count=1 2>/dev/null | xxd -p)
-	[[ "$a_cur" == "dc" ]] && printf '\xd8' | dd of="$setup" bs=1 seek=$((0x2C0CD)) count=1 conv=notrunc 2>/dev/null
-	local b_cur=$(dd if="$setup" bs=1 skip=$((0x21E39)) count=4 2>/dev/null | xxd -p)
-	[[ "$b_cur" == "dcd8dfe0" ]] && printf '\xdd\xd8\xb4\x40' | dd of="$setup" bs=1 seek=$((0x21E39)) count=4 conv=notrunc 2>/dev/null
-	# `return 0` is load-bearing, not decoration -- same set -e trap as uaro-patcher's
-	# wait bracketing above: when Site B is ALREADY patched (the normal healthy state),
-	# the [[ ]] && list above returns 1, that becomes this function's exit status, and
-	# under `set -e` the whole script dies right here -- before the exec below ever
-	# runs. Symptom without this line: double-clicking UaRO Settings.app silently does
-	# nothing. Verified live on a real install (2026-08-01): repro
-	# `zsh -c 'set -e; f() { [[ a == b ]] && echo x; }; f; echo reached'` never prints
-	# "reached"; adding return 0 fixed the launcher immediately.
-	return 0
-}
-
-_patch_setup_exe
-exec wine64 "setup.exe" >/dev/null 2>&1
-EOF
-```
-
-### Stage 2.2B — gated bundle-local Settings route
-
-The existing Settings launcher above remains the documented fallback until this
-route is proven on the target machine. The bounded replacement keeps the
-launcher decision and FCOM mutation evidence in the bundle-local runtime:
+The bundle-local Settings launcher below is the sole active Step 11 Settings route. It keeps the launcher decision and FCOM mutation evidence in the bundle-local runtime:
 
 ```text
 Finder / LaunchServices
@@ -1347,7 +1303,7 @@ python3 "$AURO_REPO_ROOT/scripts/build_settings_runtime.py" build \
   --python "$PYTHON_RUNTIME"
 ```
 
-Write the following as the staged replacement for
+Write the following as the deterministic implementation for
 `/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings`. Replace every
 angle-bracket placeholder before writing the file; the quoted heredoc keeps the
 runtime variables literal for the later Finder launch.
@@ -1560,10 +1516,10 @@ exec wine64 "setup.exe" >/dev/null 2>&1
 EOF
 ```
 
-This route never falls back to inline byte edits. A verifier `PASS` is only
+This route has no inline FCOM fallback. A verifier `PASS` is only
 deployment evidence; the explicit `fcom apply` result and the independent
 read-only `fcom check` must both prove the final `PATCHED` state before
-`setup.exe` is launched. Re-sign the app after installing this staged script.
+`setup.exe` is launched. Re-sign the app after installing this deterministic script.
 
 `UaRO Game.app/Contents/MacOS/uaro-game` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, same stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
 

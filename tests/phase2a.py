@@ -553,7 +553,8 @@ def test_fcom_cutover_contract() -> None:
     require("fcom apply" not in fcom_route_block(), "initial read-only route became self-authorizing")
     require("SAVEDATA_BACKUP_VERIFIED" not in section, "savedata routing was integrated into Step 8")
     step11 = step11_section()
-    require("_patch_setup_exe" in step11 and "return 0" in step11, "Step 11 inline FCOM logic was unexpectedly changed")
+    for legacy_marker in ("_patch_setup_exe", "dd if=", "xxd -p", "printf '\\xd8'", "printf '\\xdd\\xd8\\xb4\\x40'"):
+        require(legacy_marker not in step11, f"retired Step 11 inline FCOM marker remains: {legacy_marker}")
 
 
 def test_readonly_executor_integrity() -> None:
@@ -840,9 +841,148 @@ def test_execution_gate() -> None:
     require("EXECUTION = UNCONFIRMED" in section, "unavailable live evidence is not left UNCONFIRMED")
 
 
+def settings_route_script() -> str:
+    section = step11_section()
+    start = section.index("### Stage 2.2B — bundle-local Settings route")
+    end = section.index("### App icon", start)
+    route = section[start:end]
+    marker = 'cat > "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" <<\'EOF\'\n'
+    script_start = route.index(marker) + len(marker)
+    script_end = route.index("\nEOF\n", script_start)
+    return route[script_start:script_end]
+
+
+def run_settings_route_case(mode: str, python_failure: bool = False) -> Tuple[subprocess.CompletedProcess[str], bool, bool, str]:
+    with tempfile.TemporaryDirectory(prefix="phase2b-settings-route-") as temp:
+        root = Path(temp)
+        fixture_root = root / "fixture root with spaces"
+        fixture_root.mkdir()
+        game = fixture_root / "game dir with spaces"
+        game.mkdir()
+        (game / "setup.exe").write_bytes(b"setup fixture")
+        runtime = fixture_root / "bundle resources with spaces"
+        runtime.mkdir()
+        bin_dir = fixture_root / "fake bin"
+        bin_dir.mkdir()
+        launch_marker = fixture_root / "setup-launched"
+        legacy_marker = fixture_root / "legacy-mutation-invoked"
+        prefix_path = fixture_root / "wineprefix"
+        prefix_path.mkdir()
+
+        write_executable(
+            runtime / "settings_runtime_verify.py",
+            """#!/usr/bin/env python3
+import json
+import os
+if os.environ.get("SETTINGS_ROUTE_MODE") == "verifier-fail":
+    raise SystemExit(17)
+print(json.dumps({"result": "PASS", "executor_verified": True, "verifier_verified": True, "python_verified": True}))
+""",
+        )
+        write_executable(
+            runtime / "uaro.py",
+            """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+operation = sys.argv[2]
+target = sys.argv[3]
+trace = Path(__file__).with_name("executor-trace")
+trace.write_text(trace.read_text() + operation + "\\n" if trace.exists() else operation + "\\n")
+mode = os.environ.get("SETTINGS_ROUTE_MODE", "success")
+if operation == "apply":
+    if mode == "apply-fail":
+        raise SystemExit(23)
+    if mode == "malformed-apply":
+        print("{")
+        raise SystemExit(0)
+    payload = {
+        "operation": "fcom-apply", "capability": "REVERSIBLE_MUTATION", "result": "success",
+        "mutation": True, "target": target, "state": "UNPATCHED", "pre_state": "UNPATCHED",
+        "post_state": "PATCHED", "site_a": "patched", "site_b": "patched",
+        "backup_created": True, "verification": "passed", "reason": "patched and verified",
+    }
+    print(json.dumps(payload, sort_keys=True))
+    raise SystemExit(0)
+
+check_count_path = Path(__file__).with_name("check-count")
+check_count = int(check_count_path.read_text()) if check_count_path.exists() else 0
+check_count_path.write_text(str(check_count + 1))
+if mode == "post-check-fail" and check_count == 1:
+    raise SystemExit(29)
+state = "PATCHED" if check_count == 1 and mode != "post-check-not-patched" else "UNPATCHED"
+payload = {
+    "operation": "fcom-check", "capability": "READ", "result": "success", "mutation": False,
+    "target": target, "state": state, "site_a": "patched" if state == "PATCHED" else "unpatched",
+    "site_b": "patched" if state == "PATCHED" else "unpatched", "backup_created": False,
+    "verification": "not-run", "reason": "classified",
+}
+print(json.dumps(payload, sort_keys=True))
+""",
+        )
+        (runtime / "MANIFEST.json").write_text("{}")
+
+        write_executable(
+            bin_dir / "whisky",
+            f'''#!/bin/sh
+if [ "$1" = "shellenv" ]; then
+  printf "export WINEPREFIX='%s'\\n" "{prefix_path}"
+fi
+''',
+        )
+        for command in ("wineserver", "pkill", "sleep"):
+            write_executable(bin_dir / command, "#!/bin/sh\nexit 0\n")
+        write_executable(
+            bin_dir / "wine64",
+            f'''#!/bin/sh
+echo "$*" > "{launch_marker}"
+exit 0
+''',
+        )
+        for command in ("dd", "xxd"):
+            write_executable(bin_dir / command, f'''#!/bin/sh
+echo {command} >> "{legacy_marker}"
+exit 99
+''')
+
+        recorded_python: Path
+        if python_failure:
+            recorded_python = fixture_root / "recorded python"
+            recorded_python.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$1" = "{runtime / "settings_runtime_verify.py"}" ]; then exit 31; fi\n'
+                f'exec "{os.sys.executable}" "$@"\n'
+            )
+            recorded_python.chmod(0o755)
+        else:
+            recorded_python = Path(os.sys.executable)
+
+        script = settings_route_script()
+        replacements = {
+            "<BOTTLE_NAME>": "bottle with spaces",
+            "<GAME_DIR>": str(game),
+            "<RECORDED_PYTHON>": str(recorded_python),
+            "<RUNTIME_DIR>": str(runtime),
+        }
+        for placeholder, value in replacements.items():
+            script = script.replace(placeholder, value)
+        env = {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "SETTINGS_ROUTE_MODE": mode,
+        }
+        proc = run_zsh(script, env, cwd=root)
+        launched = launch_marker.exists()
+        legacy_called = legacy_marker.exists()
+        trace_path = runtime / "executor-trace"
+        trace = trace_path.read_text() if trace_path.exists() else ""
+        return proc, launched, legacy_called, trace
+
+
 def test_stage22b_bundle_settings_route() -> None:
     section = step11_section()
-    start = section.index("### Stage 2.2B — gated bundle-local Settings route")
+    start = section.index("### Stage 2.2B — bundle-local Settings route")
     end = section.index("### App icon", start)
     route = section[start:end]
     for phrase in (
@@ -857,13 +997,40 @@ def test_stage22b_bundle_settings_route() -> None:
         'exec wine64 \"setup.exe\"',
     ):
         require(phrase in route, f"Stage 2.2B route is missing: {phrase}")
-    require("dd if=\"$setup\"" not in route, "Stage 2.2B route retained inline byte mutation")
-    require("xxd -p" not in route, "Stage 2.2B route retained shell byte classification")
+    for legacy_marker in ("_patch_setup_exe", "dd if=", "xxd -p", "printf '\\xd8'", "printf '\\xdd\\xd8\\xb4\\x40'"):
+        require(legacy_marker not in section, f"active Step 11 legacy mutation marker remains: {legacy_marker}")
     require("fcom check" in route and route.count("fcom check") >= 2, "Stage 2.2B route lacks independent post-check")
-    legacy_start = section.index("UaRO Settings.app/Contents/MacOS/uaro-settings")
-    legacy_end = start
-    legacy = section[legacy_start:legacy_end]
-    require("_patch_setup_exe" in legacy and "return 0" in legacy, "legacy Settings mutation HOW was removed before proof")
+    require(route.count('"$RUNTIME_DIR/uaro.py" fcom apply "$SETUP")') == 1, "Stage 2.2B route has more than one active apply HOW")
+
+
+def test_stage22b_route_fail_closed() -> None:
+    proc, launched, legacy_called, trace = run_settings_route_case("success")
+    require(proc.returncode == 0 and launched, f"valid Settings route did not launch setup.exe: {report_process(proc)}")
+    require(trace.splitlines() == ["check", "apply", "check"], f"valid route did not reach apply and independent check: {trace!r}")
+    require(not legacy_called, "valid route invoked a retired shell mutation command")
+
+    proc, launched, legacy_called, trace = run_settings_route_case("verifier-fail")
+    require(proc.returncode != 0 and not launched and not legacy_called, "verifier failure launched setup or invoked legacy mutation")
+    require(trace == "", "verifier failure reached the bundled executor")
+
+    proc, launched, legacy_called, trace = run_settings_route_case("success", python_failure=True)
+    require(proc.returncode != 0 and not launched and not legacy_called, "Python runtime failure launched setup or invoked legacy mutation")
+    require(trace == "", "Python runtime failure reached the bundled executor")
+
+    for mode, expected_trace in (
+        ("apply-fail", ["check", "apply"]),
+        ("malformed-apply", ["check", "apply"]),
+        ("post-check-fail", ["check", "apply", "check"]),
+        ("post-check-not-patched", ["check", "apply", "check"]),
+    ):
+        proc, launched, legacy_called, trace = run_settings_route_case(mode)
+        require(proc.returncode != 0 and not launched and not legacy_called, f"{mode} did not fail closed")
+        require(trace.splitlines() == expected_trace, f"{mode} reached an unexpected route stage: {trace!r}")
+
+    section = step11_section()
+    for legacy_marker in ("_patch_setup_exe", "dd if=", "xxd -p", "printf '\\xd8'", "printf '\\xdd\\xd8\\xb4\\x40'"):
+        require(legacy_marker not in section, f"legacy mutation marker remains reachable in Step 11: {legacy_marker}")
+    require("fcom apply \"$SETUP\"" in settings_route_script(), "deterministic Settings route does not own mutation")
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -1026,6 +1193,7 @@ def run_all() -> int:
         ("Stage 1 executor integrity", test_readonly_executor_integrity),
         ("F-03 execution gate", test_execution_gate),
         ("Stage 2.2B bundle Settings route", test_stage22b_bundle_settings_route),
+        ("Stage 2.2B fail-closed route integration", test_stage22b_route_fail_closed),
         ("F-05 uaro-cli false-success", test_uaro_cli),
         ("F-06 savedata backup gate", test_savedata_gate),
         ("scope", test_scope),
