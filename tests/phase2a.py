@@ -1145,7 +1145,19 @@ def test_uaro_cli() -> None:
 
 
 def test_scope() -> None:
-    allowed = {"SKILL.md", "scripts/uaro.py", "tests/README.md", "tests/phase2a.py", "tests/test_uaro.py"}
+    # Phase 2C adds a bounded AzzyAI safety executor and its direct tests. Keep
+    # the scope gate explicit so unrelated files still fail closed.
+    allowed = {
+        "AZZYAI_FIXES.md",
+        "README.md",
+        "SKILL.md",
+        "scripts/azzyai.py",
+        "scripts/uaro.py",
+        "tests/README.md",
+        "tests/phase2a.py",
+        "tests/test_azzyai.py",
+        "tests/test_uaro.py",
+    }
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,

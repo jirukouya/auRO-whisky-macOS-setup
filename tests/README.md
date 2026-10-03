@@ -22,4 +22,11 @@ runtime proof of a real macOS installation. Live execution evidence remains
 UNCONFIRMED unless it is independently observable.
 
 The harness intentionally covers only Phase 2A findings F-01, F-02, F-03,
-F-05, and F-06. It does not implement Phase 2C or Phase 2D.
+F-05, and F-06. Phase 2C's AzzyAI replacement boundary has a separate direct
+test suite:
+
+    PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test_azzyai.py
+
+That suite uses temporary USER_AI trees only. It does not invoke Whisky, Wine,
+uaRO, a real launcher, or a deletion command. F-04 external artifact
+provenance and Phase 2D remain outside this harness.

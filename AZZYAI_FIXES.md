@@ -32,12 +32,32 @@ mkdir -p /tmp/azzyai-extract
 ditto -xk ~/Downloads/AzzyAI-master.zip /tmp/azzyai-extract
 ```
 
-**Before copying, ask whether the player wants to keep any existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files) — copying AzzyAI's version over the top replaces it. Most players installing AzzyAI want exactly that, but confirm rather than assuming, per AzzyAI's own documented caveat:
+**Before replacing anything, ask whether the player wants to replace the existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files). The replacement route below always makes an external, independently compared backup first; a user's answer controls whether replacement is wanted, not whether the safety gate can be skipped. Do not use a direct `cp -R` over the live directory:
 
 ```bash
 USER_AI_DIR="<the real path find just printed>"
-cp -R /tmp/azzyai-extract/AzzyAI-master/USER_AI/. "$USER_AI_DIR/"
+AURO_REPO_ROOT="<the checked-out auRO-whisky-macOS-setup path>"
+PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
+[[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
+  echo "BLOCKED: an absolute executable Python runtime is required" >&2
+  exit 1
+}
+AZZYAI_BACKUP_DIR="<an external path that does not already exist>"
+"$PYTHON_RUNTIME" "$AURO_REPO_ROOT/scripts/azzyai.py" replace \
+  --source /tmp/azzyai-extract/AzzyAI-master/USER_AI \
+  --destination "$USER_AI_DIR" \
+  --backup "$AZZYAI_BACKUP_DIR"
 ```
+
+The command blocks when the existing `USER_AI` tree is missing, unreadable, a
+symlink, or changed during the transaction; when the backup destination exists
+or is inside `USER_AI`; when copying reports failure; or when the staged tree
+does not compare byte-for-byte with the replacement tree. On success it leaves
+the previous live tree beside `USER_AI` as a rollback copy and emits structured
+evidence for both the verified backup and the post-copy comparison. A printed
+`backup_verified` field is evidence only; the replacement command creates its
+own path-bound authorization and rechecks both trees immediately before the
+directory exchange.
 
 ## Step 4 — Activate AzzyAI in-game
 

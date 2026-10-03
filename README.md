@@ -46,7 +46,8 @@ playbook handles:
 - Wine Gecko installation for the patcher.
 - Game configuration, keyboard mapping, and launcher creation.
 - Verification, repair, rollback, and optional `uaro-cli` tooling.
-- Optional AzzyAI installation and repair after the core setup.
+- Optional AzzyAI installation and repair after the core setup, with a
+  deterministic USER_AI backup and replacement gate in `scripts/azzyai.py`.
 
 The README stays at the decision and usage level. Exact commands, paths,
 placeholders, and mandatory checks live in [`SKILL.md`](./SKILL.md).
