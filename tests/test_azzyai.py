@@ -119,6 +119,25 @@ class AzzyAiBackupTests(unittest.TestCase):
         self.assertEqual(result["copy"]["status"], "failed")
         self.assertFalse(result["backup_verified"])
 
+    def test_backup_parent_swap_during_copy_blocks_verification(self) -> None:
+        source = self.user_ai(files={"AI.lua": b"ai"})
+        parent = self.root / "backup-parent"
+        parent.mkdir()
+        destination = parent / "backup"
+        moved_parent = self.root / "moved-backup-parent"
+        external = self.root / "external-parent"
+
+        def swap_parent(src: Path, dst: Path) -> None:
+            shutil.copytree(src, dst)
+            parent.rename(moved_parent)
+            external.mkdir()
+            parent.symlink_to(external, target_is_directory=True)
+
+        result = azzyai.backup_user_ai(source, destination, copy_fn=swap_parent)
+        self.assertFalse(result["backup_verified"])
+        self.assertIn("parent changed", result["reason"])
+        self.assertTrue((moved_parent / "backup" / "AI.lua").is_file())
+
     def test_nonzero_copy_result_blocks_even_with_success_output(self) -> None:
         source = self.user_ai(files={"AI.lua": b"ai"})
 
@@ -405,6 +424,41 @@ class AzzyAiReplacementTests(unittest.TestCase):
         payload = json.loads(process.stdout)
         self.assertTrue(payload["replacement_verified"])
         self.assertTrue(payload["authorization"]["backup_verified"])
+        self.assertEqual(payload["evidence"]["status"], "succeeded")
+        evidence_path = Path(payload["evidence"]["path"])
+        self.assertEqual(evidence_path.stat().st_mode & 0o777, 0o600)
+        records = [json.loads(line) for line in evidence_path.read_text().splitlines()]
+        self.assertEqual(
+            [record["phase"] for record in records],
+            ["replacement-authorized", "replacement-complete"],
+        )
+        self.assertEqual([record["result"] for record in records], ["authorized", "success"])
+        for record in records:
+            self.assertEqual(record["schema_version"], 1)
+            self.assertIn("descriptive-only", record["evidence_scope"])
+
+    def test_evidence_path_overlap_blocks_before_exchange(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        before = tree_bytes(destination)
+        result = azzyai.replace_user_ai(token, evidence_path=destination / "evidence.jsonl")
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("evidence path", result["reason"])
+        self.assertEqual(tree_bytes(destination), before)
+
+    def test_evidence_write_failure_blocks_before_exchange(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        before = tree_bytes(destination)
+        parent_file = self.root / "not-a-directory"
+        parent_file.write_bytes(b"file")
+        result = azzyai.replace_user_ai(
+            token, evidence_path=parent_file / "evidence.jsonl"
+        )
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("evidence could not be persisted", result["reason"])
+        self.assertTrue(result["staging_cleaned"])
+        self.assertEqual(tree_bytes(destination), before)
 
 
 if __name__ == "__main__":

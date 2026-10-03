@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -103,6 +104,59 @@ def _cleanup_staging(path: Path) -> None:
         shutil.rmtree(path)
     elif path.exists():
         path.unlink()
+
+
+def _evidence_record(result: Dict[str, object], phase: str) -> Dict[str, object]:
+    """Build descriptive evidence without copying nested authority state."""
+
+    comparison = result.get("comparison")
+    final_comparison = result.get("final_comparison")
+    return {
+        "schema_version": 1,
+        "evidence_scope": "descriptive-only; never read as replacement authority",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "phase": phase,
+        "operation": result.get("operation"),
+        "result": result.get("result"),
+        "reason": result.get("reason"),
+        "source": result.get("source"),
+        "destination": result.get("destination"),
+        "backup": result.get("backup"),
+        "backup_verified": result.get("backup_verified", False),
+        "replacement_authorized": result.get("replacement_authorized", False),
+        "replacement_verified": result.get("replacement_verified", False),
+        "comparison_status": comparison.get("status") if isinstance(comparison, dict) else None,
+        "final_comparison_status": (
+            final_comparison.get("status") if isinstance(final_comparison, dict) else None
+        ),
+    }
+
+
+def _append_evidence(path: Path, result: Dict[str, object], phase: str) -> Dict[str, object]:
+    """Append one durable descriptive record; callers never use it as authority."""
+
+    try:
+        if _has_symlink_component(path) or _is_symlink(path):
+            raise OSError("evidence path contains an unsupported symlink component")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = (json.dumps(_evidence_record(result, phase), sort_keys=True) + "\n").encode()
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            written = 0
+            while written < len(line):
+                written += os.write(fd, line[written:])
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return {"status": "succeeded", "path": str(path), "phase": phase}
+    except OSError as exc:
+        return {"status": "failed", "path": str(path), "phase": phase, "reason": str(exc)}
 
 
 def _snapshot_tree(root: Path) -> TreeSnapshot:
@@ -289,9 +343,15 @@ def backup_user_ai(
     copier = copy_fn or _copy_tree
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        parent_identity = _identity(destination.parent)
         copy_outcome = copier(source, destination)
         if _copy_failed(copy_outcome):
             raise RuntimeError("copy operation reported failure")
+        if (
+            _has_symlink_component(destination)
+            or _identity(destination.parent) != parent_identity
+        ):
+            raise RuntimeError("backup destination parent changed during copy")
         result["mutation"] = True
         result["copy"] = {"status": "succeeded", "success": True}
     except Exception as exc:
@@ -456,6 +516,7 @@ def _blocked_replacement(reason: str, *, authorization: bool = False) -> Dict[st
 def replace_user_ai(
     authorization: Optional[ReplacementAuthorization],
     copy_fn: Optional[CopyFn] = None,
+    evidence_path: str | Path | None = None,
 ) -> Dict[str, object]:
     """Replace USER_AI only with fresh, path-bound authorization evidence."""
 
@@ -522,6 +583,15 @@ def replace_user_ai(
         result["reason"] = "verified USER_AI backup no longer matches destination"
         return result
 
+    evidence = Path(evidence_path) if evidence_path is not None else None
+    if evidence is not None and (
+        _paths_overlap(evidence, source)
+        or _paths_overlap(evidence, destination)
+        or _paths_overlap(evidence, authorization.backup)
+    ):
+        result["reason"] = "evidence path must be outside USER_AI and its backup"
+        return result
+
     staging = destination.parent / f".{destination.name}.azzyai-staging"
     previous = destination.parent / f".{destination.name}.azzyai-previous"
     if staging.exists() or staging.is_symlink():
@@ -564,6 +634,74 @@ def replace_user_ai(
         result["reason"] = comparison.get("reason", "replacement staging comparison failed")
         return result
 
+    # The staging callback is a test seam for a copy command. Re-check every
+    # bound path after it returns so a parent swap during the copy cannot turn
+    # the subsequent rename into a mutation of an external tree.
+    try:
+        if (
+            _has_symlink_component(source)
+            or _has_symlink_component(destination)
+            or _has_symlink_component(authorization.backup)
+        ):
+            raise RuntimeError("source, destination, or backup path changed to a symlink")
+        if _identity(source) != authorization.source_identity:
+            raise RuntimeError("staged AzzyAI source identity changed during copy")
+        if _identity(destination) != authorization.destination_identity:
+            raise RuntimeError("USER_AI destination identity changed during copy")
+        if _identity(destination.parent) != authorization.destination_parent_identity:
+            raise RuntimeError("USER_AI destination parent changed during copy")
+        if _identity(authorization.backup) != authorization.backup_identity:
+            raise RuntimeError("verified USER_AI backup identity changed during copy")
+        source_after = _snapshot_tree(source)
+        destination_after = _snapshot_tree(destination)
+        backup_after = _snapshot_tree(authorization.backup)
+    except (OSError, RuntimeError, UnsupportedEntryError) as exc:
+        try:
+            _cleanup_staging(staging)
+            result["staging_cleaned"] = True
+        except OSError as cleanup_error:
+            result["staging"] = str(staging)
+            result["reason"] = f"path revalidation failed and staging cleanup failed: {cleanup_error}"
+            return result
+        result["reason"] = f"path revalidation failed; USER_AI was not changed: {exc}"
+        return result
+    if (
+        _freeze_snapshot(source_after) != authorization.source_snapshot
+        or _freeze_snapshot(destination_after) != authorization.destination_snapshot
+        or _freeze_snapshot(backup_after) != authorization.backup_snapshot
+        or backup_after != destination_after
+    ):
+        try:
+            _cleanup_staging(staging)
+            result["staging_cleaned"] = True
+        except OSError as cleanup_error:
+            result["staging"] = str(staging)
+            result["reason"] = f"path contents changed and staging cleanup failed: {cleanup_error}"
+            return result
+        result["reason"] = "bound source, destination, or backup contents changed; USER_AI was not changed"
+        return result
+
+    if evidence is not None:
+        evidence_result = _append_evidence(
+            evidence,
+            {
+                **result,
+                "result": "authorized",
+                "reason": "replacement authorized after fresh backup and exact staging comparison",
+            },
+            "replacement-authorized",
+        )
+        result["evidence"] = evidence_result
+        if evidence_result["status"] != "succeeded":
+            try:
+                _cleanup_staging(staging)
+                result["staging_cleaned"] = True
+            except OSError as cleanup_error:
+                result["reason"] = f"durable evidence failed and staging cleanup failed: {cleanup_error}"
+                return result
+            result["reason"] = "durable replacement evidence could not be persisted; USER_AI was not changed"
+            return result
+
     try:
         destination.rename(previous)
         try:
@@ -598,6 +736,8 @@ def replace_user_ai(
             "previous": str(previous),
         }
     )
+    if evidence is not None:
+        result["evidence"] = _append_evidence(evidence, result, "replacement-complete")
     return result
 
 
@@ -616,17 +756,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     replace.add_argument("--source", required=True, help="staged AzzyAI USER_AI directory")
     replace.add_argument("--destination", required=True, help="existing game USER_AI directory")
     replace.add_argument("--backup", required=True, help="external backup destination")
+    replace.add_argument(
+        "--evidence",
+        help="optional external JSONL evidence path (default: <backup>.evidence.jsonl)",
+    )
     args = parser.parse_args(argv)
 
     if args.area == "backup":
-        return _emit(backup_user_ai(args.source, args.destination))
+        result = backup_user_ai(args.source, args.destination)
+        if result["result"] == "success":
+            result["evidence"] = _append_evidence(
+                Path(f"{args.destination}.evidence.jsonl"), result, "backup-complete"
+            )
+        return _emit(result)
     if args.area == "replace":
         authorization_result, authorization = authorize_user_ai_replacement(
             args.source, args.destination, args.backup
         )
         if authorization is None:
             return _emit(authorization_result)
-        replacement_result = replace_user_ai(authorization)
+        evidence_path = args.evidence or f"{args.backup}.evidence.jsonl"
+        replacement_result = replace_user_ai(authorization, evidence_path=evidence_path)
         replacement_result["authorization"] = authorization_result
         return _emit(replacement_result)
     parser.error("unsupported operation")

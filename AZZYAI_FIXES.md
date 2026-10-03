@@ -58,7 +58,9 @@ the previous live tree beside `USER_AI` as a rollback copy and emits structured
 evidence for both the verified backup and the post-copy comparison. A printed
 `backup_verified` field is evidence only; the replacement command creates its
 own path-bound authorization and rechecks both trees immediately before the
-directory exchange.
+directory exchange. The default CLI path also appends descriptive records to
+`<AZZYAI_BACKUP_DIR>.evidence.jsonl`; these records explain what was observed
+but are never read as authority for a later replacement.
 
 ## Step 4 — Activate AzzyAI in-game
 
