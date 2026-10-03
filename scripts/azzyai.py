@@ -757,6 +757,9 @@ def replace_user_ai(
                         "restored": False,
                     }
                 )
+                result["rollback_evidence"] = _append_evidence(
+                    evidence, result, "replacement-rollback-failed"
+                )
                 return result
             result.update(
                 {
@@ -768,6 +771,9 @@ def replace_user_ai(
                     ),
                     "restored": restored,
                 }
+            )
+            result["rollback_evidence"] = _append_evidence(
+                evidence, result, "replacement-rollback"
             )
     return result
 

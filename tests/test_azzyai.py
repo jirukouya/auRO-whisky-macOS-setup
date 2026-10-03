@@ -499,7 +499,10 @@ class AzzyAiReplacementTests(unittest.TestCase):
 
         def fail_completion(path: Path, result: dict[str, object], phase: str) -> dict[str, object]:
             if phase == "replacement-complete":
-                return {"status": "failed", "path": str(path), "phase": phase, "reason": "injected"}
+                persisted = original_append(path, result, phase)
+                persisted["status"] = "failed"
+                persisted["reason"] = "injected after write"
+                return persisted
             return original_append(path, result, phase)
 
         azzyai._append_evidence = fail_completion  # type: ignore[assignment]
@@ -513,6 +516,12 @@ class AzzyAiReplacementTests(unittest.TestCase):
         self.assertEqual(tree_bytes(destination), before)
         self.assertFalse((destination.parent / ".USER_AI.azzyai-previous").exists())
         self.assertFalse((destination.parent / ".USER_AI.azzyai-staging").exists())
+        records = [json.loads(line) for line in evidence_path.read_text().splitlines()]
+        self.assertEqual(
+            [record["phase"] for record in records],
+            ["replacement-authorized", "replacement-complete", "replacement-rollback"],
+        )
+        self.assertEqual(records[-1]["result"], "blocked")
 
 
 if __name__ == "__main__":
