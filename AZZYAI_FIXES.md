@@ -55,12 +55,16 @@ symlink, or changed during the transaction; when the backup destination exists
 or is inside `USER_AI`; when copying reports failure; or when the staged tree
 does not compare byte-for-byte with the replacement tree. On success it leaves
 the previous live tree beside `USER_AI` as a rollback copy and emits structured
-evidence for both the verified backup and the post-copy comparison. A printed
-`backup_verified` field is evidence only; the replacement command creates its
-own path-bound authorization and rechecks both trees immediately before the
+operation output plus a small descriptive JSONL sidecar. The sidecar records
+status and paths for the observed transaction; it is not replayable proof and
+is never read as authority. A printed `backup_verified` field is evidence only;
+the replacement command creates its own path-bound authorization and rechecks
+both trees immediately before the
 directory exchange. The default CLI path also appends descriptive records to
-`<AZZYAI_BACKUP_DIR>.evidence.jsonl`; these records explain what was observed
-but are never read as authority for a later replacement.
+`<AZZYAI_BACKUP_DIR>.evidence.jsonl`; these records explain what was observed,
+are fsynced before a live exchange, and are never read as authority for a later
+replacement. If completion evidence cannot be persisted after the exchange,
+the command attempts to restore the previous tree and exits blocked.
 
 ## Step 4 — Activate AzzyAI in-game
 

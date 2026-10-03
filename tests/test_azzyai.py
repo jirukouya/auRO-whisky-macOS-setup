@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 from pathlib import Path
 import shutil
@@ -137,6 +139,34 @@ class AzzyAiBackupTests(unittest.TestCase):
         self.assertFalse(result["backup_verified"])
         self.assertIn("parent changed", result["reason"])
         self.assertTrue((moved_parent / "backup" / "AI.lua").is_file())
+
+    def test_backup_cli_blocks_if_evidence_append_fails(self) -> None:
+        source = self.user_ai(files={"AI.lua": b"ai"})
+        destination = self.root / "backup"
+        original_append = azzyai._append_evidence
+
+        def fail_append(path: Path, result: dict[str, object], phase: str) -> dict[str, object]:
+            return {"status": "failed", "path": str(path), "phase": phase, "reason": "injected"}
+
+        azzyai._append_evidence = fail_append  # type: ignore[assignment]
+        try:
+            output = StringIO()
+            with redirect_stdout(output):
+                return_code = azzyai.main(
+                    [
+                        "backup",
+                        "--source",
+                        str(source),
+                        "--destination",
+                        str(destination),
+                    ]
+                )
+        finally:
+            azzyai._append_evidence = original_append  # type: ignore[assignment]
+        payload = json.loads(output.getvalue())
+        self.assertEqual(return_code, 1)
+        self.assertEqual(payload["result"], "blocked")
+        self.assertTrue(payload["backup_verified"])
 
     def test_nonzero_copy_result_blocks_even_with_success_output(self) -> None:
         source = self.user_ai(files={"AI.lua": b"ai"})
@@ -459,6 +489,30 @@ class AzzyAiReplacementTests(unittest.TestCase):
         self.assertIn("evidence could not be persisted", result["reason"])
         self.assertTrue(result["staging_cleaned"])
         self.assertEqual(tree_bytes(destination), before)
+
+    def test_completion_evidence_failure_restores_original_tree(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        before = tree_bytes(destination)
+        evidence_path = self.root / "evidence.jsonl"
+        original_append = azzyai._append_evidence
+
+        def fail_completion(path: Path, result: dict[str, object], phase: str) -> dict[str, object]:
+            if phase == "replacement-complete":
+                return {"status": "failed", "path": str(path), "phase": phase, "reason": "injected"}
+            return original_append(path, result, phase)
+
+        azzyai._append_evidence = fail_completion  # type: ignore[assignment]
+        try:
+            result = azzyai.replace_user_ai(token, evidence_path=evidence_path)
+        finally:
+            azzyai._append_evidence = original_append  # type: ignore[assignment]
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["replacement_verified"])
+        self.assertTrue(result["restored"])
+        self.assertEqual(tree_bytes(destination), before)
+        self.assertFalse((destination.parent / ".USER_AI.azzyai-previous").exists())
+        self.assertFalse((destination.parent / ".USER_AI.azzyai-staging").exists())
 
 
 if __name__ == "__main__":

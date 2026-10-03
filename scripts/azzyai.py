@@ -737,7 +737,38 @@ def replace_user_ai(
         }
     )
     if evidence is not None:
-        result["evidence"] = _append_evidence(evidence, result, "replacement-complete")
+        completion_evidence = _append_evidence(evidence, result, "replacement-complete")
+        result["evidence"] = completion_evidence
+        if completion_evidence["status"] != "succeeded":
+            try:
+                destination.rename(staging)
+                previous.rename(destination)
+                restored = _compare_trees(authorization.backup, destination)["status"] == "equal"
+                _cleanup_staging(staging)
+            except Exception as exc:
+                result.update(
+                    {
+                        "replacement_verified": False,
+                        "result": "blocked",
+                        "reason": (
+                            "durable replacement completion evidence failed and original USER_AI "
+                            f"restore failed: {exc}"
+                        ),
+                        "restored": False,
+                    }
+                )
+                return result
+            result.update(
+                {
+                    "replacement_verified": False,
+                    "result": "blocked",
+                    "reason": (
+                        "durable replacement completion evidence failed; original USER_AI "
+                        "was restored"
+                    ),
+                    "restored": restored,
+                }
+            )
     return result
 
 
@@ -765,9 +796,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.area == "backup":
         result = backup_user_ai(args.source, args.destination)
         if result["result"] == "success":
-            result["evidence"] = _append_evidence(
+            evidence_result = _append_evidence(
                 Path(f"{args.destination}.evidence.jsonl"), result, "backup-complete"
             )
+            result["evidence"] = evidence_result
+            if evidence_result["status"] != "succeeded":
+                result["result"] = "blocked"
+                result["reason"] = "backup verified but durable evidence could not be persisted"
         return _emit(result)
     if args.area == "replace":
         authorization_result, authorization = authorize_user_ai_replacement(

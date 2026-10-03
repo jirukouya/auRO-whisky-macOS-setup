@@ -31,4 +31,6 @@ That suite uses temporary USER_AI trees only. It does not invoke Whisky, Wine,
 uaRO, a real launcher, or a deletion command. F-04 external artifact
 provenance and Phase 2D remain outside this harness. Successful CLI replacement
 also exercises the small descriptive JSONL evidence sidecar; the sidecar is not
-read by the replacement gate.
+read by the replacement gate. Tests also inject evidence-write failures to
+confirm backup CLI failure status and restoration after a post-exchange append
+failure.
