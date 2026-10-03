@@ -45,7 +45,9 @@ unrelated dirty work and stop mutation when state is ambiguous.
 Every consequential phase must name its repository identity, branch, parent
 `HEAD`, authorized files and capabilities, forbidden scope, frozen invariants,
 worktree policy, required evidence and tests, independent verification,
-rollback boundary, and one of the five terminal states defined by the program.
+rollback boundary, and one of the five terminal states defined by the program:
+`PHASE_COMPLETED`, `BLOCKED_EXTERNAL`, `NEEDS_ADJUDICATION`,
+`NEEDS_USER_DECISION`, or `FAILED`.
 A phase commit is local unless the human grants new remote or integration
 authority.
 
