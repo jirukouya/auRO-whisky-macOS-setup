@@ -4,33 +4,36 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import whisky  # noqa: E402
 
 
 class WhiskyPolicyTests(unittest.TestCase):
-    def test_skill_download_routes_fail_closed_and_recheck_before_extract(self) -> None:
+    def test_skill_download_routes_fail_closed_and_extract_verified_snapshot(self) -> None:
         skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
         start = skill.index("## Step 3 — Whisky.app")
         end = skill.index("## Step 4 — WhiskyWine runtime", start)
         section = skill[start:end]
         self.assertIn("an existing Whisky installation is UNCONFIRMED", section)
-        self.assertEqual(section.count("python3 scripts/whisky.py verify-download"), 4)
+        self.assertEqual(section.count("verify-and-extract"), 2)
         for source in ("IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip", "auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"):
             block_start = section.index(source)
             block_start = section.rfind("```bash", 0, block_start)
             block_end = section.index("```", block_start + len("```bash"))
             block = section[block_start:block_end]
             self.assertIn("set -e", block)
-            self.assertEqual(block.count("verify-download"), 2)
-            self.assertLess(block.rfind("verify-download"), block.index("ditto -xk"))
+            self.assertEqual(block.count("verify-and-extract"), 1)
+            self.assertNotIn("ditto -xk", block)
             self.assertIn("mktemp -d /tmp/Whisky-extract.", block)
 
     def test_source_policy_is_fixed_and_descriptive(self) -> None:
@@ -78,7 +81,7 @@ class WhiskyPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="whisky-policy-") as temp:
             path = Path(temp) / "Whisky.zip"
             path.write_bytes(payload)
-            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest):
+            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest), mock.patch.object(whisky, "_policy_error", return_value=None):
                 result = whisky.verify_download(path, whisky.WHISKY_OFFICIAL_SOURCE)
         self.assertEqual(result["result"], "success")
         self.assertEqual(result["integrity_status"], "match")
@@ -92,11 +95,83 @@ class WhiskyPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="whisky-policy-") as temp:
             path = Path(temp) / "Whisky.zip"
             path.write_bytes(payload)
-            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest):
+            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest), mock.patch.object(whisky, "_policy_error", return_value=None):
                 result = whisky.verify_download(path, whisky.WHISKY_PROJECT_FALLBACK_SOURCE)
         self.assertEqual(result["result"], "success")
         self.assertEqual(result["source_kind"], "PROJECT_FALLBACK")
         self.assertEqual(result["provenance_status"], "CONTENT_ANCHORED_SOURCE_PROVENANCE_UNCONFIRMED")
+
+    def test_verify_and_extract_uses_verified_snapshot(self) -> None:
+        payload_buffer = io.BytesIO()
+        with zipfile.ZipFile(payload_buffer, "w") as archive:
+            archive.writestr("Whisky.app/Contents/Info.plist", "fixture")
+        payload = payload_buffer.getvalue()
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="whisky-extract-") as temp:
+            root = Path(temp)
+            archive_path = root / "Whisky.zip"
+            destination = root / "extract"
+            archive_path.write_bytes(payload)
+            destination.mkdir()
+            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest), mock.patch.object(whisky, "_policy_error", return_value=None):
+                result = whisky.extract_verified(archive_path, whisky.WHISKY_OFFICIAL_SOURCE, destination)
+            extracted = (destination / "Whisky.app/Contents/Info.plist").read_text()
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(extracted, "fixture")
+        self.assertIn("one anonymous archive snapshot", result["verification_method"])
+
+    def test_verify_and_extract_resists_path_replacement_after_open(self) -> None:
+        good_buffer = io.BytesIO()
+        with zipfile.ZipFile(good_buffer, "w") as archive:
+            archive.writestr("Whisky.app/good", "GOOD")
+        evil_buffer = io.BytesIO()
+        with zipfile.ZipFile(evil_buffer, "w") as archive:
+            archive.writestr("Whisky.app/evil", "EVIL")
+        good_payload = good_buffer.getvalue()
+        digest = hashlib.sha256(good_payload).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="whisky-race-") as temp:
+            root = Path(temp)
+            archive_path = root / "Whisky.zip"
+            destination = root / "extract"
+            archive_path.write_bytes(good_payload)
+            destination.mkdir()
+            real_open = whisky.os.open
+
+            def replace_after_open(path: str | bytes | os.PathLike[str], flags: int, *args: int) -> int:
+                descriptor = real_open(path, flags, *args)
+                if Path(path) == archive_path:
+                    replacement = root / "replacement.zip"
+                    replacement.write_bytes(evil_buffer.getvalue())
+                    os.replace(replacement, archive_path)
+                return descriptor
+
+            with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest), mock.patch.object(whisky, "_policy_error", return_value=None), mock.patch.object(whisky.os, "open", replace_after_open):
+                result = whisky.extract_verified(archive_path, whisky.WHISKY_OFFICIAL_SOURCE, destination)
+            self.assertEqual(result["result"], "success")
+            self.assertEqual((destination / "Whisky.app/good").read_text(), "GOOD")
+            self.assertFalse((destination / "Whisky.app/evil").exists())
+
+    def test_verify_and_extract_blocks_zip_traversal_and_symlink_members(self) -> None:
+        for name in ("../escape", "Whisky.app/link"):
+            payload_buffer = io.BytesIO()
+            with zipfile.ZipFile(payload_buffer, "w") as archive:
+                info = zipfile.ZipInfo(name)
+                if name.endswith("link"):
+                    info.create_system = 3
+                    info.external_attr = (0o120777 << 16) | 0xA0000000
+                archive.writestr(info, "target")
+            payload = payload_buffer.getvalue()
+            digest = hashlib.sha256(payload).hexdigest()
+            with tempfile.TemporaryDirectory(prefix="whisky-extract-") as temp:
+                root = Path(temp)
+                archive_path = root / "Whisky.zip"
+                destination = root / "extract"
+                archive_path.write_bytes(payload)
+                destination.mkdir()
+                with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", digest), mock.patch.object(whisky, "_policy_error", return_value=None):
+                    result = whisky.extract_verified(archive_path, whisky.WHISKY_OFFICIAL_SOURCE, destination)
+            self.assertEqual(result["result"], "blocked")
+            self.assertIn("archive contains", result["reason"])
 
     def test_wrong_bytes_block_even_when_source_is_approved(self) -> None:
         with tempfile.TemporaryDirectory(prefix="whisky-policy-") as temp:
@@ -122,10 +197,11 @@ class WhiskyPolicyTests(unittest.TestCase):
         self.assertIn("symlink", linked["reason"])
 
     def test_malformed_fixed_policy_blocks(self) -> None:
-        with mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", "candidate-controlled"):
-            result = whisky.source_policy()
-        self.assertEqual(result["result"], "blocked")
-        self.assertIn("digest policy", result["reason"])
+        for value in ("candidate-controlled", "0" * 64, "a" * 64):
+            with self.subTest(value=value), mock.patch.object(whisky, "WHISKY_EXPECTED_SHA256", value):
+                result = whisky.source_policy()
+            self.assertEqual(result["result"], "blocked")
+            self.assertIn("digest policy", result["reason"])
 
     def test_result_is_json_serializable(self) -> None:
         payload = whisky.source_policy()

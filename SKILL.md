@@ -354,11 +354,7 @@ WHISKY_SOURCE="https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/
 WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
 WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
 curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
-python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
-# Re-read and verify immediately before extraction so a replaced pathname cannot pass a stale check.
-python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
-test -d "$WHISKY_EXTRACT" && test -z "$(find "$WHISKY_EXTRACT" -mindepth 1 -print -quit)"
-ditto -xk "$WHISKY_ZIP" "$WHISKY_EXTRACT"
+python3 scripts/whisky.py verify-and-extract --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE" --destination "$WHISKY_EXTRACT"
 test -d "$WHISKY_EXTRACT/Whisky.app"
 cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
@@ -372,11 +368,7 @@ WHISKY_SOURCE="https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/dow
 WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
 WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
 curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
-python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
-# Re-read and verify immediately before extraction so a replaced pathname cannot pass a stale check.
-python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
-test -d "$WHISKY_EXTRACT" && test -z "$(find "$WHISKY_EXTRACT" -mindepth 1 -print -quit)"
-ditto -xk "$WHISKY_ZIP" "$WHISKY_EXTRACT"
+python3 scripts/whisky.py verify-and-extract --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE" --destination "$WHISKY_EXTRACT"
 test -d "$WHISKY_EXTRACT/Whisky.app"
 cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
