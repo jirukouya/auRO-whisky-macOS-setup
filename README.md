@@ -88,6 +88,22 @@ alone is not proof that the game is working.
 - A uaRO account, because the installer download is behind uaRO's login page.
 - Time to perform the human-only installer and first-run checks.
 
+## Recovery boundary
+
+Git restores the repository, its contracts, tests, fixtures, and installation
+playbook. It does not restore machine state or private account data.
+
+| State | Recoverable from Git | Recovery still needed |
+|---|---|---|
+| Code, contracts, tests, fixtures, and docs | Yes | Clone or restore the canonical repository |
+| Homebrew, Rosetta, Whisky, WhiskyWine, Wine Gecko | No | Reinstall or verify the machine dependencies |
+| uaRO installer and account session | No | Log in and download the installer again |
+| Bottle, game files, savedata, and AzzyAI user configuration | No | Restore from the user's own backups or reinstall |
+| TCC, Keychain, administrator access, and signing environment | No | Re-authorize the new machine when macOS prompts |
+
+The repository records the required categories and verification routes; it
+does not store passwords, tokens, private keys, or account credentials.
+
 The procedure documents a real end-to-end run on Apple Silicon macOS 26.5.2.
 That is evidence for the documented route, not a guarantee for every future
 macOS release, uaRO installer build, or Gepard Shield update.
