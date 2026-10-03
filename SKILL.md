@@ -1630,13 +1630,20 @@ done
 "$LSREGISTER" -dump 2>/dev/null | grep -A2 "identifier:.*com.uaro"
 ```
 
-**MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
+**MANDATORY local signature-integrity check — confirm the bundle has a valid ad-hoc signature and make the trust boundary explicit.** This proves the bundle's current code signature is internally valid after our local edit; it does **not** establish an Apple developer identity, notarization, or upstream provenance:
 
 ```bash
 APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
 [[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
 for APP in "${APPS[@]}"; do
-  codesign -dv "/Applications/$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
+  BUNDLE="/Applications/$APP"
+  if ! codesign --verify --deep --strict "$BUNDLE" >/dev/null 2>&1; then
+    echo "FAILED: $APP local code-signature verification failed"
+  elif codesign -dv "$BUNDLE" 2>&1 | grep -q "not signed"; then
+    echo "FAILED: $APP still unsigned"
+  else
+    echo "OK: $APP local ad-hoc signature verified (signer trust/notarization unestablished)"
+  fi
 done
 ```
 
@@ -1777,13 +1784,20 @@ cmd_repair() {
             issues+=("$APP: Info.plist invalid -- rebuild via Step 11")
         fi
 
-        codesign --force --deep --sign - "$bundle" >/dev/null 2>&1 || true
-        if codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
+        if ! codesign --force --deep --sign - "$bundle" >/dev/null 2>&1; then
+            echo "[WARN] Re-sign command failed"
+            problems=$((problems + 1))
+            issues+=("$APP: re-sign command failed -- not expected to fail, worth a closer look rather than a routine Step 11 rebuild")
+        elif ! codesign --verify --deep --strict "$bundle" >/dev/null 2>&1; then
+            echo "[WARN] Local code-signature verification failed after re-sign"
+            problems=$((problems + 1))
+            issues+=("$APP: local code-signature verification failed after re-sign -- signer trust/notarization remains unestablished")
+        elif codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
             echo "[WARN] Still unsigned after a re-sign attempt"
             problems=$((problems + 1))
             issues+=("$APP: still unsigned after a re-sign attempt -- not expected to fail, worth a closer look rather than a routine Step 11 rebuild")
         else
-            echo "[OK]   Signature valid (re-signed)"
+            echo "[OK]   Local ad-hoc signature verified (signer trust/notarization unestablished)"
         fi
 
         "$LSREGISTER" -f "$bundle" >/dev/null 2>&1 || true

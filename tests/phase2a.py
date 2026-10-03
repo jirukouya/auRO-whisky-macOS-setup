@@ -1152,10 +1152,12 @@ def test_scope() -> None:
         "README.md",
         "SKILL.md",
         "scripts/azzyai.py",
+        "scripts/build_settings_runtime.py",
         "scripts/uaro.py",
         "tests/README.md",
         "tests/phase2a.py",
         "tests/test_azzyai.py",
+        "tests/test_settings_runtime.py",
         "tests/test_uaro.py",
     }
     proc = subprocess.run(

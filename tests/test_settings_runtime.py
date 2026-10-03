@@ -466,7 +466,7 @@ class SettingsRuntimeTests(unittest.TestCase):
             "    generate runtime resources",
             "    -> verify runtime resources",
             "    -> codesign app bundle",
-            "    -> verify app signature",
+            "    -> caller verifies the app's local code signature (if required)",
             "    -> deploy",
         )
         positions = [source.index(item) for item in expected]

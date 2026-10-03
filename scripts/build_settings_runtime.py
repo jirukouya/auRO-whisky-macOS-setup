@@ -11,7 +11,7 @@ Deployment ordering contract:
     -> verify runtime resources
     -> construct/finalize launcher
     -> codesign app bundle
-    -> verify app signature
+    -> caller verifies the app's local code signature (if required)
     -> deploy
 
 This module does not contain uaRO command implementations or a second runtime
