@@ -28,8 +28,9 @@ find ~ -maxdepth 6 -type d -iname "USER_AI" 2>/dev/null
 **Extract to a scratch folder first, then copy — never extract directly on top of `USER_AI`.** This is the one step most likely to be done wrong: the GitHub zip's internal layout nests everything one level deeper than AzzyAI's own historical packaged releases (the ones its `Documentation.pdf` was written against) — extracting it produces `AzzyAI-master/USER_AI/<the actual .lua files, AzzyAIConfig.exe, Documentation.pdf>`, not the flat `AzzyAI-master/<files>` the PDF describes. **What has to land in the game's real `USER_AI/` folder is the *contents* of `AzzyAI-master/USER_AI/`, not the `AzzyAI-master` folder itself and not a nested `USER_AI` folder inside it:**
 
 ```bash
-mkdir -p /tmp/azzyai-extract
-ditto -xk ~/Downloads/AzzyAI-master.zip /tmp/azzyai-extract
+AZZYAI_EXTRACT_DIR="${TMPDIR:-/tmp}/azzyai-extract"
+mkdir -p "$AZZYAI_EXTRACT_DIR"
+ditto -xk ~/Downloads/AzzyAI-master.zip "$AZZYAI_EXTRACT_DIR"
 ```
 
 **Before replacing anything, ask whether the player wants to replace the existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files). The replacement route below always makes an external, independently compared backup first; a user's answer controls whether replacement is wanted, not whether the safety gate can be skipped. Do not use a direct `cp -R` over the live directory:
@@ -44,7 +45,7 @@ PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
 }
 AZZYAI_BACKUP_DIR="<an external path that does not already exist>"
 "$PYTHON_RUNTIME" "$AURO_REPO_ROOT/scripts/azzyai.py" replace \
-  --source /tmp/azzyai-extract/AzzyAI-master/USER_AI \
+  --source "$AZZYAI_EXTRACT_DIR/AzzyAI-master/USER_AI" \
   --destination "$USER_AI_DIR" \
   --backup "$AZZYAI_BACKUP_DIR"
 ```

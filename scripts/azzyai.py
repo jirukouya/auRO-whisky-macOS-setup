@@ -35,6 +35,8 @@ def _copy_failed(outcome: object) -> bool:
 
     if outcome is False:
         return True
+    if isinstance(outcome, (int, float)) and not isinstance(outcome, bool):
+        return outcome != 0
     returncode = None
     if isinstance(outcome, dict) and "returncode" in outcome:
         returncode = outcome["returncode"]
@@ -49,6 +51,15 @@ def _copy_failed(outcome: object) -> bool:
         return outcome["success"] is not True
     if hasattr(outcome, "success"):
         return getattr(outcome, "success") is not True
+    status = None
+    if isinstance(outcome, dict) and "status" in outcome:
+        status = outcome["status"]
+    elif hasattr(outcome, "status"):
+        status = getattr(outcome, "status")
+    if status is not None:
+        return status not in ("ok", "passed", "success", "succeeded")
+    if isinstance(outcome, str):
+        return True
     return False
 
 
@@ -62,6 +73,25 @@ def _is_symlink(path: Path) -> bool:
         return stat.S_ISLNK(os.lstat(path).st_mode)
     except OSError:
         return False
+
+
+def _has_symlink_component(path: Path) -> bool:
+    """Reject lexical path aliases so a parent cannot redirect a mutation."""
+
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        if _is_symlink(current):
+            # macOS exposes /var and /tmp as stable aliases into /private;
+            # permit those OS aliases while rejecting project/user aliases.
+            if current in (Path("/var"), Path("/tmp")) and os.path.realpath(current) in {
+                "/private/var",
+                "/private/tmp",
+            }:
+                continue
+            return True
+    return False
 
 
 def _cleanup_staging(path: Path) -> None:
@@ -242,6 +272,9 @@ def backup_user_ai(
         return result
 
     try:
+        if _has_symlink_component(source) or _has_symlink_component(destination):
+            result["reason"] = "source and backup paths must not contain symlink components"
+            return result
         if _is_within(destination, source):
             result["reason"] = "backup destination is inside USER_AI"
             return result
@@ -350,8 +383,12 @@ def authorize_user_ai_replacement(
         if _paths_overlap(source, backup) or _paths_overlap(destination, backup):
             result["reason"] = "backup destination overlaps a USER_AI tree"
             return result, None
-        if _is_symlink(source) or _is_symlink(destination) or _is_symlink(backup):
-            result["reason"] = "source, destination, and backup roots must not be symlinks"
+        if (
+            _has_symlink_component(source)
+            or _has_symlink_component(destination)
+            or _has_symlink_component(backup)
+        ):
+            result["reason"] = "source, destination, and backup paths must not contain symlink components"
             return result, None
         source_snapshot = _snapshot_tree(source)
         destination_snapshot = _snapshot_tree(destination)
@@ -446,8 +483,12 @@ def replace_user_ai(
     try:
         if _paths_overlap(source, destination):
             return _blocked_replacement("staged source and USER_AI destination overlap", authorization=True)
-        if _is_symlink(source) or _is_symlink(destination) or _is_symlink(authorization.backup):
-            result["reason"] = "source, destination, and backup roots must not be symlinks"
+        if (
+            _has_symlink_component(source)
+            or _has_symlink_component(destination)
+            or _has_symlink_component(authorization.backup)
+        ):
+            result["reason"] = "source, destination, and backup paths must not contain symlink components"
             return result
         if _identity(source) != authorization.source_identity:
             result["reason"] = "staged AzzyAI source identity changed after authorization"

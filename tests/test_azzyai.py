@@ -130,6 +130,19 @@ class AzzyAiBackupTests(unittest.TestCase):
         self.assertEqual(result["copy"]["status"], "failed")
         self.assertFalse(result["backup_verified"])
 
+        result = azzyai.backup_user_ai(
+            source,
+            self.root / "backup-int",
+            copy_fn=lambda src, dst: 1,
+        )
+        self.assertFalse(result["backup_verified"])
+        result = azzyai.backup_user_ai(
+            source,
+            self.root / "backup-status",
+            copy_fn=lambda src, dst: {"status": "failed", "stdout": "SUCCESS"},
+        )
+        self.assertFalse(result["backup_verified"])
+
     def test_byte_mismatch_blocks(self) -> None:
         source = self.user_ai(files={"AI.lua": b"ai"})
 
@@ -281,8 +294,27 @@ class AzzyAiReplacementTests(unittest.TestCase):
         container.symlink_to(external, target_is_directory=True)
         replaced = azzyai.replace_user_ai(token)
         self.assertEqual(replaced["result"], "blocked")
-        self.assertIn("identity changed", replaced["reason"])
+        self.assertTrue(
+            "identity changed" in replaced["reason"]
+            or "symlink components" in replaced["reason"]
+        )
         self.assertEqual((external / "USER_AI" / "AI.lua").read_bytes(), b"external")
+
+    def test_ancestor_symlink_alias_is_rejected(self) -> None:
+        staged = self.tree("staged", {"AI.lua": b"new"})
+        real_parent = self.root / "real-parent"
+        real_parent.mkdir()
+        destination = real_parent / "USER_AI"
+        destination.mkdir()
+        (destination / "AI.lua").write_bytes(b"old")
+        alias = self.root / "alias"
+        alias.symlink_to(real_parent, target_is_directory=True)
+        result, token = azzyai.authorize_user_ai_replacement(
+            staged, alias / "USER_AI", self.root / "backup"
+        )
+        self.assertIsNone(token)
+        self.assertFalse(result["replacement_authorized"])
+        self.assertIn("symlink components", result["reason"])
 
     def test_verified_backup_change_after_authorization_blocks(self) -> None:
         _, token, _, destination = self.authorize()
