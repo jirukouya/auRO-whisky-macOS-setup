@@ -840,6 +840,32 @@ def test_execution_gate() -> None:
     require("EXECUTION = UNCONFIRMED" in section, "unavailable live evidence is not left UNCONFIRMED")
 
 
+def test_stage22b_bundle_settings_route() -> None:
+    section = step11_section()
+    start = section.index("### Stage 2.2B — gated bundle-local Settings route")
+    end = section.index("### App icon", start)
+    route = section[start:end]
+    for phrase in (
+        "build_settings_runtime.py",
+        "--python \"$PYTHON_RUNTIME\"",
+        "settings_runtime_verify.py",
+        'payload.get("result") != "PASS"',
+        'fcom apply \"$SETUP\"',
+        "validate_bundled_executor_json",
+        "independent post-apply FCOM check",
+        'payload.get(\"state\") != \"PATCHED\"',
+        'exec wine64 \"setup.exe\"',
+    ):
+        require(phrase in route, f"Stage 2.2B route is missing: {phrase}")
+    require("dd if=\"$setup\"" not in route, "Stage 2.2B route retained inline byte mutation")
+    require("xxd -p" not in route, "Stage 2.2B route retained shell byte classification")
+    require("fcom check" in route and route.count("fcom check") >= 2, "Stage 2.2B route lacks independent post-check")
+    legacy_start = section.index("UaRO Settings.app/Contents/MacOS/uaro-settings")
+    legacy_end = start
+    legacy = section[legacy_start:legacy_end]
+    require("_patch_setup_exe" in legacy and "return 0" in legacy, "legacy Settings mutation HOW was removed before proof")
+
+
 def write_executable(path: Path, content: str) -> None:
     path.write_text(content)
     path.chmod(0o755)
@@ -999,6 +1025,7 @@ def run_all() -> int:
         ("Stage 2.1 FCOM cutover contract", test_fcom_cutover_contract),
         ("Stage 1 executor integrity", test_readonly_executor_integrity),
         ("F-03 execution gate", test_execution_gate),
+        ("Stage 2.2B bundle Settings route", test_stage22b_bundle_settings_route),
         ("F-05 uaro-cli false-success", test_uaro_cli),
         ("F-06 savedata backup gate", test_savedata_gate),
         ("scope", test_scope),

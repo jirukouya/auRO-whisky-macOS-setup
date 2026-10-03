@@ -1314,6 +1314,257 @@ exec wine64 "setup.exe" >/dev/null 2>&1
 EOF
 ```
 
+### Stage 2.2B — gated bundle-local Settings route
+
+The existing Settings launcher above remains the documented fallback until this
+route is proven on the target machine. The bounded replacement keeps the
+launcher decision and FCOM mutation evidence in the bundle-local runtime:
+
+```text
+Finder / LaunchServices
+        -> UaRO Settings.app
+        -> recorded absolute Python
+        -> bundle-local settings_runtime_verify.py
+        -> runtime PASS
+        -> bundled uaro.py fcom apply "$SETUP"
+        -> validate apply evidence
+        -> independent bundled fcom check "$SETUP"
+        -> require PATCHED
+        -> launch setup.exe
+```
+
+Build the runtime after `UaRO Settings.app` exists and while the canonical
+sources are committed and clean. The recorded interpreter path is embedded in
+the launcher so a later Finder launch never searches `PATH`:
+
+```bash
+AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before building the Settings runtime}"
+PYTHON_RUNTIME="$(python3 -c 'import os,sys; print(os.path.abspath(sys.executable))')"
+RUNTIME_DIR="/Applications/UaRO Settings.app/Contents/Resources/uaro-runtime"
+python3 "$AURO_REPO_ROOT/scripts/build_settings_runtime.py" build \
+  --repo-root "$AURO_REPO_ROOT" \
+  --destination "$RUNTIME_DIR" \
+  --python "$PYTHON_RUNTIME"
+```
+
+Write the following as the staged replacement for
+`/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings`. Replace every
+angle-bracket placeholder before writing the file; the quoted heredoc keeps the
+runtime variables literal for the later Finder launch.
+
+```bash
+cat > "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" <<'EOF'
+#!/bin/zsh
+set -e
+BOTTLE_NAME="<BOTTLE_NAME>"
+GAME_DIR="<GAME_DIR>"
+PYTHON_RUNTIME="<RECORDED_PYTHON>"
+RUNTIME_DIR="<RUNTIME_DIR>"
+WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
+cd "$GAME_DIR"
+
+[[ -x "$PYTHON_RUNTIME" ]] || { echo "BLOCKED: recorded Python is missing or not executable" >&2; exit 1; }
+[[ -f "$RUNTIME_DIR/MANIFEST.json" && -f "$RUNTIME_DIR/uaro.py" && -f "$RUNTIME_DIR/settings_runtime_verify.py" ]] || {
+  echo "BLOCKED: bundled Settings runtime is incomplete" >&2
+  exit 1
+}
+
+RUNTIME_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/settings_runtime_verify.py" "$RUNTIME_DIR")" || {
+  echo "BLOCKED: bundle-local Settings runtime verification failed" >&2
+  exit 1
+}
+if ! "$PYTHON_RUNTIME" - "$RUNTIME_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed runtime verification evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("result") != "PASS":
+    print("BLOCKED: bundled Settings runtime did not PASS", file=sys.stderr)
+    raise SystemExit(1)
+for key in ("executor_verified", "verifier_verified", "python_verified"):
+    if payload.get(key) is not True:
+        print(f"BLOCKED: runtime verification omitted {key}", file=sys.stderr)
+        raise SystemExit(1)
+PYEOF
+then
+  exit 1
+fi
+
+SETUP="$GAME_DIR/setup.exe"
+[[ -f "$SETUP" ]] || { echo "BLOCKED: setup.exe is missing" >&2; exit 1; }
+
+validate_bundled_executor_json() {
+  local payload="$1"
+  local expected_operation="$2"
+  local expected_path_key="$3"
+  local expected_path="$4"
+  local expected_capability="$5"
+  local validation_mode="$6"
+  "$PYTHON_RUNTIME" - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" "$expected_capability" "$validation_mode" <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed bundled executor JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: bundled executor JSON is not an object", file=sys.stderr)
+    raise SystemExit(1)
+expected_operation, expected_path_key, expected_path = sys.argv[2:5]
+expected_capability, validation_mode = sys.argv[5:7]
+required = ("operation", "capability", "result", "mutation")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete bundled executor evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["operation"] != expected_operation or payload["result"] != "success":
+    print("BLOCKED: bundled executor returned an unexpected result", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "readonly" and payload["mutation"] is not False:
+    print("BLOCKED: independent FCOM check was not read-only", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "apply" and not isinstance(payload["mutation"], bool):
+    print("BLOCKED: FCOM apply evidence has no boolean mutation field", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("capability") != expected_capability:
+    print("BLOCKED: bundled executor returned an unexpected capability", file=sys.stderr)
+    raise SystemExit(1)
+reported_path = payload.get(expected_path_key)
+if not isinstance(reported_path, str):
+    print("BLOCKED: bundled executor omitted its target path", file=sys.stderr)
+    raise SystemExit(1)
+if os.path.realpath(os.path.abspath(reported_path)) != os.path.realpath(os.path.abspath(expected_path)):
+    print("BLOCKED: bundled executor named a different target", file=sys.stderr)
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
+PYEOF
+}
+
+wineserver -k >/dev/null 2>&1 || true
+pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
+pkill -f "uaRO.exe" >/dev/null 2>&1 || true
+pkill -f "setup.exe" >/dev/null 2>&1 || true
+sleep 1
+
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
+export WINE_CPU_TOPOLOGY=4:0,1,2,3
+
+if ! CHECK_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom check "$SETUP")"; then
+  echo "BLOCKED: bundled pre-apply FCOM check failed" >&2
+  exit 1
+fi
+if ! CHECK_JSON="$(validate_bundled_executor_json "$CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+  exit 1
+fi
+if ! CHECK_STATE="$("$PYTHON_RUNTIME" - "$CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+required = ("state", "site_a", "site_b", "backup_created", "verification")
+if any(key not in payload for key in required):
+    print("BLOCKED: incomplete pre-apply FCOM evidence", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: pre-apply FCOM state is not safely classifiable", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "UNPATCHED" and (payload["site_a"] != "unpatched" or payload["site_b"] != "unpatched"):
+    print("BLOCKED: pre-apply FCOM site evidence disagrees", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "PATCHED" and (payload["site_a"] != "patched" or payload["site_b"] != "patched"):
+    print("BLOCKED: pre-apply FCOM site evidence disagrees", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: pre-apply check claimed mutation", file=sys.stderr)
+    raise SystemExit(1)
+print(payload["state"])
+PYEOF
+)"; then
+  exit 1
+fi
+
+if [[ "$CHECK_STATE" == "UNPATCHED" ]]; then
+  if ! APPLY_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom apply "$SETUP")"; then
+    echo "BLOCKED: bundled FCOM apply failed" >&2
+    exit 1
+  fi
+  if ! APPLY_JSON="$(validate_bundled_executor_json "$APPLY_JSON" "fcom-apply" "target" "$SETUP" "REVERSIBLE_MUTATION" "apply")"; then
+    exit 1
+  fi
+  if ! "$PYTHON_RUNTIME" - "$APPLY_JSON" <<'PYEOF'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+required = ("state", "pre_state", "post_state", "site_a", "site_b", "backup_created", "mutation", "verification", "reason")
+if any(key not in payload for key in required):
+    print("BLOCKED: incomplete FCOM apply evidence", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] not in ("UNPATCHED", "PATCHED") or payload["post_state"] != "PATCHED":
+    print("BLOCKED: FCOM apply did not prove PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] != payload["pre_state"] or payload["verification"] != "passed":
+    print("BLOCKED: FCOM apply evidence is incoherent", file=sys.stderr)
+    raise SystemExit(1)
+if payload["reason"] not in ("patched and verified", "already patched; no-op"):
+    print("BLOCKED: FCOM apply returned an unrecognized success reason", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "UNPATCHED" and payload["mutation"] is not True:
+    print("BLOCKED: UNPATCHED apply did not report mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "PATCHED" and (payload["mutation"] is not False or payload["backup_created"] is not False):
+    print("BLOCKED: no-op apply claimed mutation or backup", file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+  then
+    exit 1
+  fi
+
+  if ! POST_CHECK_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom check "$SETUP")"; then
+    echo "BLOCKED: independent post-apply FCOM check failed" >&2
+    exit 1
+  fi
+  if ! POST_CHECK_JSON="$(validate_bundled_executor_json "$POST_CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+    exit 1
+  fi
+  if ! "$PYTHON_RUNTIME" - "$POST_CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+if payload.get("state") != "PATCHED" or payload.get("site_a") != "patched" or payload.get("site_b") != "patched":
+    print("BLOCKED: independent FCOM check did not prove PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("mutation") is not False or payload.get("backup_created") is not False or payload.get("verification") != "not-run":
+    print("BLOCKED: independent post-apply check claimed mutation", file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+  then
+    exit 1
+  fi
+  echo "FCOM apply and independent PATCHED check passed"
+elif [[ "$CHECK_STATE" != "PATCHED" ]]; then
+  echo "BLOCKED: pre-apply FCOM state=$CHECK_STATE" >&2
+  exit 1
+fi
+
+exec wine64 "setup.exe" >/dev/null 2>&1
+EOF
+```
+
+This route never falls back to inline byte edits. A verifier `PASS` is only
+deployment evidence; the explicit `fcom apply` result and the independent
+read-only `fcom check` must both prove the final `PATCHED` state before
+`setup.exe` is launched. Re-sign the app after installing this staged script.
+
 `UaRO Game.app/Contents/MacOS/uaro-game` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, same stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
 
 ```bash
