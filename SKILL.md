@@ -1952,54 +1952,26 @@ Would you like to install AzzyAI now? **Yes / No**
 > BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
 > ```
 
-**Non-regenerable: GAME_DIR/savedata/** (save data, character settings). Every deletion level must pass the same external-backup gate immediately before deletion. The backup destination must be outside GAME_DIR, not merely outside GAME_DIR/savedata.
+**Non-regenerable: GAME_DIR/savedata/** (save data, character settings). Every deletion level must pass the deterministic external-backup transaction immediately before deletion. The backup destination must be outside GAME_DIR, not merely outside GAME_DIR/savedata.
 
-The source policy distinguishes a missing path from an existing empty directory. Missing, unreadable, non-directory, destination-inside-game, existing-destination, copy, read-back, or comparison failures block deletion.
+**Stage 2.3 — deterministic savedata backup integration.** The source policy distinguishes a missing path from an existing empty directory. The bundled uaro.py backup savedata executor owns source classification, destination boundaries, copy status, and independent tree comparison. This shell block only resolves the explicit runtime and destination, validates structured evidence, and grants the deletion gate after the executor proves success.
 
 ```bash
+set -e
 GAME_DIR="${GAME_DIR:?Resolve the real game directory before continuing}"
+AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before starting the backup transaction}"
+PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
+[[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
+  echo "BLOCKED: an absolute executable Python runtime is required" >&2
+  exit 1
+}
+AURO_EXECUTOR="$AURO_REPO_ROOT/scripts/uaro.py"
+[[ -f "$AURO_EXECUTOR" ]] || {
+  echo "BLOCKED: deterministic savedata executor is missing" >&2
+  exit 1
+}
 SOURCE="$GAME_DIR/savedata"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Games/uaRO-savedata-backups}"
-
-if [[ ! -e "$SOURCE" ]]; then
-  echo "Savedata source is missing: $SOURCE -- block deletion"
-  exit 1
-fi
-if [[ ! -d "$SOURCE" ]]; then
-  echo "Savedata source is not a directory: $SOURCE -- block deletion"
-  exit 1
-fi
-if [[ ! -r "$SOURCE" ]]; then
-  echo "Savedata source is not readable: $SOURCE -- block deletion"
-  exit 1
-fi
-
-GAME_DIR_REAL="$(python3 - "$GAME_DIR" <<'PYEOF'
-import os
-import sys
-print(os.path.realpath(sys.argv[1]))
-PYEOF
-)"
-BACKUP_ROOT_REAL="$(python3 - "$BACKUP_ROOT" <<'PYEOF'
-import os
-import sys
-print(os.path.realpath(sys.argv[1]))
-PYEOF
-)"
-case "$BACKUP_ROOT_REAL/" in
-  "$GAME_DIR_REAL/"*)
-    echo "Backup root is inside GAME_DIR -- block deletion"
-    exit 1
-    ;;
-esac
-
-if [[ -z "$(find "$SOURCE" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-  echo "Savedata exists but is empty; preserving the empty directory"
-else
-  echo "Savedata source exists and contains data"
-fi
-
-mkdir -p "$BACKUP_ROOT"
 
 if [[ -n "${BACKUP_DIR:-}" ]]; then
   case "$BACKUP_DIR" in
@@ -2012,44 +1984,76 @@ else
     BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
   done
 fi
+if [[ -e "$BACKUP_DIR" ]]; then
+  echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR" >&2
+  exit 1
+fi
+BACKUP_TARGET="$BACKUP_DIR/savedata"
 
-BACKUP_DIR_REAL="$(python3 - "$BACKUP_DIR" <<'PYEOF'
+if ! BACKUP_JSON="$("$PYTHON_RUNTIME" "$AURO_EXECUTOR" backup savedata \
+  --game-dir "$GAME_DIR" \
+  --destination "$BACKUP_TARGET")"; then
+  echo "BLOCKED: deterministic savedata backup executor failed" >&2
+  exit 1
+fi
+if ! "$PYTHON_RUNTIME" - "$BACKUP_JSON" "$GAME_DIR" "$SOURCE" "$BACKUP_TARGET" <<'PYEOF'
+import json
 import os
 import sys
-print(os.path.realpath(sys.argv[1]))
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed savedata backup evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: savedata backup evidence is not an object", file=sys.stderr)
+    raise SystemExit(1)
+required = (
+    "operation", "capability", "game_dir", "source", "destination", "source_state",
+    "copy", "comparison", "backup_verified", "deletion_authority", "mutation", "result",
+)
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete savedata backup evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+expected_game, expected_source, expected_destination = sys.argv[2:5]
+for key, expected in (("game_dir", expected_game), ("source", expected_source), ("destination", expected_destination)):
+    reported = payload.get(key)
+    if not isinstance(reported, str) or os.path.realpath(os.path.abspath(reported)) != os.path.realpath(os.path.abspath(expected)):
+        print(f"BLOCKED: savedata backup evidence named a different {key}", file=sys.stderr)
+        raise SystemExit(1)
+if payload["operation"] != "backup-savedata" or payload["capability"] != "REVERSIBLE_MUTATION":
+    print("BLOCKED: savedata backup executor returned an unexpected operation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["source_state"] not in ("empty", "populated"):
+    print("BLOCKED: savedata source policy rejected the backup", file=sys.stderr)
+    raise SystemExit(1)
+copy_info = payload["copy"]
+comparison = payload["comparison"]
+if not isinstance(copy_info, dict) or copy_info.get("status") != "succeeded" or copy_info.get("success") is not True:
+    print("BLOCKED: savedata copy evidence is not successful", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(comparison, dict) or comparison.get("status") != "equal":
+    print("BLOCKED: savedata source/destination comparison did not pass", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_verified"] is not True or payload["mutation"] is not True or payload["result"] != "success":
+    print("BLOCKED: savedata backup did not prove a verified mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["deletion_authority"] is not False:
+    print("BLOCKED: executor cannot grant deletion authority", file=sys.stderr)
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
 PYEOF
-)"
-case "$BACKUP_DIR_REAL/" in
-  "$GAME_DIR_REAL/"*)
-    echo "Backup destination is inside GAME_DIR -- block deletion"
-    exit 1
-    ;;
-esac
-if [[ -e "$BACKUP_DIR" ]]; then
-  echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR"
-  exit 1
-fi
-
-mkdir "$BACKUP_DIR"
-if ! cp -R "$SOURCE" "$BACKUP_DIR/savedata"; then
-  echo "Savedata copy command failed -- block deletion"
-  exit 1
-fi
-
-if [[ ! -d "$BACKUP_DIR/savedata" ]]; then
-  echo "Backup destination was not created as a directory -- block deletion"
-  exit 1
-fi
-if ! diff -qr "$SOURCE" "$BACKUP_DIR/savedata" >/dev/null; then
-  echo "Independent source/destination comparison failed -- block deletion"
+then
   exit 1
 fi
 
 SAVEDATA_BACKUP_VERIFIED=1
-echo "Savedata backup independently verified at $BACKUP_DIR/savedata"
+echo "Savedata backup independently verified at $BACKUP_TARGET"
 ```
 
-SAVEDATA_BACKUP_VERIFIED=1 is set only after the copy command succeeds, the destination exists, and diff -qr independently compares source and destination. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
+SAVEDATA_BACKUP_VERIFIED=1 is set only after the deterministic executor reports a successful copy and an equal source/destination comparison. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 

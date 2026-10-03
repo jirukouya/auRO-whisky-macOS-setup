@@ -10,7 +10,8 @@ The harness uses Python's standard library only. It creates temporary fixtures
 and never invokes Whisky, Wine, uaRO, a real launcher, or a deletion command.
 
 The FCOM and savedata cases extract the actual shell/Python procedures from
-SKILL.md and execute them against temporary files. The uaro-cli cases extract
+SKILL.md and execute them against temporary files; the savedata route invokes
+the deterministic `uaro.py backup savedata` executor. The uaro-cli cases extract
 the embedded repair script, substitute only temporary fixture paths, and stub
 whisky, codesign, plutil, and Launch Services commands.
 

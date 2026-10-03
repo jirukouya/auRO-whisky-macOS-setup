@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import traceback
 from typing import Dict, Optional, Tuple
@@ -639,43 +640,27 @@ def tree_bytes(path: Path) -> Dict[str, bytes]:
 def run_savedata(
     game: Path,
     backup_dir: Path,
-    cp_hook: bool = False,
-    cp_failure_after_successful_copy: bool = False,
+    repo_root: Path = ROOT,
 ) -> subprocess.CompletedProcess:
     env = {
         "GAME_DIR": str(game),
         "HOME": str(game.parent / "home"),
         "BACKUP_ROOT": str(game.parent / "backup-root"),
         "BACKUP_DIR": str(backup_dir),
+        "AURO_REPO_ROOT": str(repo_root),
+        "PYTHON_RUNTIME": sys.executable,
     }
     Path(env["HOME"]).mkdir(exist_ok=True)
-    if cp_hook or cp_failure_after_successful_copy:
-        bin_dir = game.parent / "cp-hook-bin"
-        bin_dir.mkdir(exist_ok=True)
-        cp = bin_dir / "cp"
-        if cp_failure_after_successful_copy:
-            cp.write_text("#!/bin/sh\n/bin/cp \"$@\"\nexit 1\n")
-        else:
-            cp.write_text(
-                "#!/bin/sh\n"
-                "/bin/cp \"$@\"\n"
-                "last=\"\"\n"
-                "for arg in \"$@\"; do last=\"$arg\"; done\n"
-                "touch \"$last/mismatch-from-copy-hook\"\n"
-            )
-        cp.chmod(0o755)
-        env["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
     return run_zsh(savedata_block(), env)
 
 
 def test_savedata_gate() -> None:
     block = savedata_block()
-    require(block.index("GAME_DIR_REAL") < block.index("mkdir -p"), "savedata path policy is checked after backup-root creation")
-    require("if ! cp -R \"$SOURCE\" \"$BACKUP_DIR/savedata\"; then" in block, "savedata copy exit status is not checked")
-    require(block.index("if ! cp -R") < block.index("diff -qr"), "savedata comparison can override a failed copy")
-    require(block.index("diff -qr") < block.index("SAVEDATA_BACKUP_VERIFIED=1"), "deletion authority is granted before independent comparison")
-    require("Savedata exists but is empty" in block, "empty savedata is not distinguished from missing savedata")
-    require("Backup destination is inside GAME_DIR" in block, "backup destination boundary is missing")
+    require("backup savedata" in block, "savedata route does not invoke the deterministic executor")
+    require("BACKUP_JSON" in block and "backup_verified" in block, "savedata route does not validate structured evidence")
+    require("comparison.get(\"status\") != \"equal\"" in block, "savedata route does not require independent comparison")
+    require(block.index("SAVEDATA_BACKUP_VERIFIED=1") > block.index("backup_verified"), "deletion authority is granted before executor validation")
+    require("cp -R" not in block and "diff -qr" not in block, "legacy shell savedata transaction remains active")
 
     text = skill_text()
     level1_marker = "```bash\n# --- Level 1: game only ---\n"
@@ -685,7 +670,8 @@ def test_savedata_gate() -> None:
     require(level1.index("SAVEDATA_BACKUP_VERIFIED") < level1.index("LSREGISTER"), "destructive uninstall lacks a final backup-verification gate")
 
     with tempfile.TemporaryDirectory(prefix="phase2a-savedata-") as temp:
-        root = Path(temp)
+        root = Path(temp) / "fixture root with spaces"
+        root.mkdir()
         game = root / "game"
         source = game / "savedata"
         source.mkdir(parents=True)
@@ -720,29 +706,24 @@ def test_savedata_gate() -> None:
         require(proc.returncode != 0, "existing destination was merged instead of rejected")
         require((existing_backup / "old").read_bytes() == b"keep", "existing destination was modified")
 
-        mismatch_game = root / "mismatch-game"
-        mismatch_source = mismatch_game / "savedata"
-        mismatch_source.mkdir(parents=True)
-        (mismatch_source / "slot.dat").write_bytes(b"save")
-        mismatch_backup = root / "mismatch-backup"
-        proc = run_savedata(mismatch_game, mismatch_backup, cp_hook=True)
-        require(proc.returncode != 0, f"mismatched copy unexpectedly passed: {report_process(proc)}")
+        malformed_repo = root / "malformed-repo"
+        (malformed_repo / "scripts").mkdir(parents=True)
+        write_executable(malformed_repo / "scripts" / "uaro.py", "#!/usr/bin/env python3\nprint('{}')\n")
+        malformed_game = root / "malformed-game"
+        (malformed_game / "savedata").mkdir(parents=True)
+        (malformed_game / "savedata" / "slot.dat").write_bytes(b"save")
+        proc = run_savedata(malformed_game, root / "malformed-backup", repo_root=malformed_repo)
+        require(proc.returncode != 0, f"malformed executor evidence unexpectedly passed: {report_process(proc)}")
+        require("SAVEDATA_BACKUP_VERIFIED=1" not in proc.stdout, "malformed evidence granted deletion authority")
 
-        failed_copy_game = root / "failed-copy-game"
-        failed_copy_source = failed_copy_game / "savedata"
-        failed_copy_source.mkdir(parents=True)
-        (failed_copy_source / "slot.dat").write_bytes(b"save")
-        failed_copy_backup = root / "failed-copy-backup"
-        proc = run_savedata(
-            failed_copy_game,
-            failed_copy_backup,
-            cp_failure_after_successful_copy=True,
-        )
-        require(proc.returncode != 0, f"failed copy unexpectedly passed: {report_process(proc)}")
-        require(
-            "Savedata backup independently verified" not in proc.stdout,
-            "failed copy was reported as verified and deletion authority was granted",
-        )
+        failed_repo = root / "failed-repo"
+        (failed_repo / "scripts").mkdir(parents=True)
+        write_executable(failed_repo / "scripts" / "uaro.py", "#!/usr/bin/env python3\nraise SystemExit(7)\n")
+        failed_game = root / "failed-game"
+        (failed_game / "savedata").mkdir(parents=True)
+        (failed_game / "savedata" / "slot.dat").write_bytes(b"save")
+        proc = run_savedata(failed_game, root / "failed-backup", repo_root=failed_repo)
+        require(proc.returncode != 0, f"failed executor unexpectedly passed: {report_process(proc)}")
 
         inside_source_game = root / "inside-source-game"
         (inside_source_game / "savedata").mkdir(parents=True)
@@ -1164,7 +1145,7 @@ def test_uaro_cli() -> None:
 
 
 def test_scope() -> None:
-    allowed = {"SKILL.md", "scripts/uaro.py", "tests/phase2a.py", "tests/test_uaro.py"}
+    allowed = {"SKILL.md", "scripts/uaro.py", "tests/README.md", "tests/phase2a.py", "tests/test_uaro.py"}
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
