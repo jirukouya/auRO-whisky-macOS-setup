@@ -23,7 +23,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 - Step 6 now stages the user-supplied uaRO installer into a temporary file
   and atomically replaces the extraction input only after a non-empty
   successful copy/download, so a failed fetch cannot fall through to an older
-  archive.
+  archive; it also creates the actual staging directory independently of the
+  selected game directory.
 - Whisky installation now stops on any pre-existing unverified app and uses
   only the exact upstream release or byte-anchored project fallback. Download
   verification is fail-closed, repeated immediately before extraction, and

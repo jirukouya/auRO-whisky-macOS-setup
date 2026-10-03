@@ -30,6 +30,7 @@ class WhiskyPolicyTests(unittest.TestCase):
         self.assertIn("set -e", block)
         self.assertIn('INSTALLER_SOURCE="${INSTALLER_SOURCE:?', block)
         self.assertIn('PARTIAL_INSTALLER="$(mktemp', block)
+        self.assertIn('mkdir -p "$(dirname "$INSTALLER_ZIP")"', block)
         self.assertIn('test -s "$PARTIAL_INSTALLER"', block)
         self.assertIn('mv -f "$PARTIAL_INSTALLER" "$INSTALLER_ZIP"', block)
         self.assertNotIn('curl -fL --progress-bar -o "$INSTALLER_ZIP"', block)

@@ -518,7 +518,7 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 set -e
 INSTALLER_SOURCE="${INSTALLER_SOURCE:?Resolve the actual URL or local .zip path before continuing}"
 INSTALLER_ZIP="$HOME/Games/UaRO_Setup.zip"
-mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
+mkdir -p "$(dirname "$INSTALLER_ZIP")"
 PARTIAL_INSTALLER="$(mktemp "${INSTALLER_ZIP}.partial.XXXXXX")"
 cleanup_partial() { rm -f "$PARTIAL_INSTALLER"; }
 trap cleanup_partial EXIT
