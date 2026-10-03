@@ -515,15 +515,34 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 `INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does). If 2b already relocated the download to `~/Games/UaRO_Setup.zip`, there's nothing to fetch — skip straight to extraction. **`$INSTALLER_SOURCE` must actually be set as a shell variable before the `if` below runs** — it's resolved, not a placeholder, so set it explicitly if this is a fresh shell invocation (same re-derivation rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` — see the callout after the Parameters table):
 
 ```bash
-INSTALLER_SOURCE=~/Games/UaRO_Setup.zip   # if 2b staged it; otherwise the URL or local path the user actually gave you
+set -e
+INSTALLER_SOURCE="${INSTALLER_SOURCE:?Resolve the actual URL or local .zip path before continuing}"
+INSTALLER_ZIP="$HOME/Games/UaRO_Setup.zip"
 mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
-if [[ "$INSTALLER_SOURCE" == ~/Games/UaRO_Setup.zip ]]; then
-  : # already staged by 2b — nothing to do
+PARTIAL_INSTALLER="$(mktemp "${INSTALLER_ZIP}.partial.XXXXXX")"
+cleanup_partial() { rm -f "$PARTIAL_INSTALLER"; }
+trap cleanup_partial EXIT
+if [[ "$INSTALLER_SOURCE" == "$INSTALLER_ZIP" ]]; then
+  [[ -f "$INSTALLER_SOURCE" && ! -L "$INSTALLER_SOURCE" ]] || {
+    echo "BLOCKED: the staged installer is missing or is a symlink" >&2
+    exit 1
+  }
+  cp "$INSTALLER_SOURCE" "$PARTIAL_INSTALLER"
 elif [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
-  caffeinate -i curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
+  caffeinate -i curl -fL --progress-bar -o "$PARTIAL_INSTALLER" "$INSTALLER_SOURCE"
 else
-  cp "$INSTALLER_SOURCE" ~/Games/UaRO_Setup.zip
+  [[ -f "$INSTALLER_SOURCE" && ! -L "$INSTALLER_SOURCE" ]] || {
+    echo "BLOCKED: the supplied installer path is missing or is a symlink" >&2
+    exit 1
+  }
+  cp "$INSTALLER_SOURCE" "$PARTIAL_INSTALLER"
 fi
+test -s "$PARTIAL_INSTALLER" || {
+  echo "BLOCKED: installer staging produced no bytes" >&2
+  exit 1
+}
+mv -f "$PARTIAL_INSTALLER" "$INSTALLER_ZIP"
+trap - EXIT
 mkdir -p ~/Games/UaRO_Setup
 ditto -xk ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # NEVER unzip — macOS's bundled Info-Zip
                                                        # silently no-ops on ZIP64 archives over 4GB

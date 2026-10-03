@@ -19,6 +19,22 @@ import whisky  # noqa: E402
 
 
 class WhiskyPolicyTests(unittest.TestCase):
+    def test_uaro_installer_route_stops_before_stale_archive_extraction(self) -> None:
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        start = skill.index("## Step 6 — Download & extract the uaRO installer")
+        end = skill.index("## Step 7 — Run the installer", start)
+        section = skill[start:end]
+        block_start = section.index("```bash")
+        block_end = section.index("```", block_start + len("```bash"))
+        block = section[block_start:block_end]
+        self.assertIn("set -e", block)
+        self.assertIn('INSTALLER_SOURCE="${INSTALLER_SOURCE:?', block)
+        self.assertIn('PARTIAL_INSTALLER="$(mktemp', block)
+        self.assertIn('test -s "$PARTIAL_INSTALLER"', block)
+        self.assertIn('mv -f "$PARTIAL_INSTALLER" "$INSTALLER_ZIP"', block)
+        self.assertNotIn('curl -fL --progress-bar -o "$INSTALLER_ZIP"', block)
+        self.assertNotIn('cp "$INSTALLER_SOURCE" "$INSTALLER_ZIP"', block)
+
     def test_skill_download_routes_fail_closed_and_extract_verified_snapshot(self) -> None:
         skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
         start = skill.index("## Step 3 — Whisky.app")
