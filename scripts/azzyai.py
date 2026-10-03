@@ -31,6 +31,26 @@ TreeSnapshot = Dict[str, TreeEntry]
 CopyFn = Callable[[Path, Path], object]
 
 
+@dataclass(frozen=True)
+class AzzyAiSourcePolicy:
+    """Reviewed project policy for the one supported AzzyAI source state."""
+
+    repository: str
+    commit: str
+    content_scope: str
+    expected_tree_sha256: str
+
+
+# This is the single runtime source of truth.  A candidate archive or its
+# metadata must never supply the expected identity used by verification.
+AUTHORIZED_AZZYAI_SOURCE = AzzyAiSourcePolicy(
+    repository="https://github.com/SpenceKonde/AzzyAI",
+    commit="dc0144773286d52ca5f86d774abaf3d445bc7c7b",
+    content_scope="USER_AI",
+    expected_tree_sha256="4f03fdabac5afa30bbe17580e6466586d94d0ba071551f8eaebecbd2716a3eda",
+)
+
+
 def _copy_failed(outcome: object) -> bool:
     """Reject explicit failure statuses, even if stdout says "success"."""
 
@@ -194,6 +214,117 @@ def _snapshot_tree(root: Path) -> TreeSnapshot:
 
     visit(root, Path("."))
     return entries
+
+
+def _tree_identity(snapshot: TreeSnapshot) -> str:
+    """Hash the consumed tree using stable, metadata-light canonical records."""
+
+    records = [
+        {
+            "path": relative,
+            "kind": entry[0],
+            "size": entry[1],
+            "sha256": entry[2],
+        }
+        for relative, entry in sorted(snapshot.items())
+    ]
+    encoded = json.dumps(
+        records,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def source_tree_digest(path: str | Path) -> str:
+    """Return the deterministic identity of a USER_AI tree without mutating it."""
+
+    root = Path(path)
+    if root.is_symlink() or not root.is_dir():
+        raise UnsupportedEntryError("AzzyAI source must be a regular directory")
+    if _has_symlink_component(root):
+        raise UnsupportedEntryError("AzzyAI source path contains a symlink component")
+    return _tree_identity(_snapshot_tree(root))
+
+
+def _valid_source_policy(policy: AzzyAiSourcePolicy) -> Optional[str]:
+    if policy.repository != "https://github.com/SpenceKonde/AzzyAI":
+        return "authorized AzzyAI repository policy is malformed"
+    if len(policy.commit) != 40 or any(character not in "0123456789abcdef" for character in policy.commit):
+        return "authorized AzzyAI commit policy is malformed"
+    if policy.content_scope != "USER_AI":
+        return "authorized AzzyAI content scope policy is malformed"
+    if len(policy.expected_tree_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in policy.expected_tree_sha256
+    ):
+        return "authorized AzzyAI tree identity policy is malformed"
+    return None
+
+
+def verify_azzyai_source(
+    source_path: str | Path,
+    *,
+    observed_repository: str,
+    observed_commit: str,
+) -> Dict[str, object]:
+    """Verify one extracted USER_AI tree against the reviewed source policy.
+
+    The observed repository/commit are claims about how the human acquired the
+    tree.  They are compared with the fixed project policy, while the tree
+    identity is independently recomputed from the supplied bytes.  Neither the
+    claims nor this descriptive result grants replacement authority.
+    """
+
+    policy = AUTHORIZED_AZZYAI_SOURCE
+    result: Dict[str, object] = {
+        "operation": "verify-azzyai-source",
+        "artifact": "AzzyAI",
+        "authorized_repository": policy.repository,
+        "authorized_commit": policy.commit,
+        "observed_repository": observed_repository,
+        "observed_commit": observed_commit,
+        "verification_method": "project-pinned USER_AI tree identity",
+        "content_scope": policy.content_scope,
+        "expected_tree_identity": policy.expected_tree_sha256,
+        "observed_tree_identity": None,
+        "source_claim_verified": False,
+        "identity_verified": False,
+        "content_verified": False,
+        "signature_status": "not-verified",
+        "provenance_claim": "immutable_source_identity_and_content_only",
+        "result": "blocked",
+        "reason": "not-run",
+    }
+    policy_error = _valid_source_policy(policy)
+    if policy_error:
+        result["reason"] = policy_error
+        return result
+    if observed_repository != policy.repository:
+        result["reason"] = "observed AzzyAI repository does not match reviewed policy"
+        return result
+    if observed_commit != policy.commit:
+        result["reason"] = "observed AzzyAI commit does not match reviewed policy"
+        return result
+    result["source_claim_verified"] = True
+    try:
+        observed_digest = source_tree_digest(source_path)
+    except (OSError, RuntimeError, UnsupportedEntryError) as exc:
+        result["reason"] = f"cannot verify AzzyAI USER_AI tree: {exc}"
+        return result
+    result["observed_tree_identity"] = observed_digest
+    if observed_digest != policy.expected_tree_sha256:
+        result["reason"] = "AzzyAI USER_AI tree does not match reviewed commit content"
+        return result
+    result.update(
+        {
+            "identity_verified": True,
+            "content_verified": True,
+            "result": "success",
+            "reason": "AzzyAI repository, commit claim, and USER_AI content match reviewed policy",
+        }
+    )
+    return result
 
 
 def _compare_trees(source: Path, destination: Path) -> Dict[str, object]:
@@ -409,8 +540,16 @@ def authorize_user_ai_replacement(
     destination_path: str | Path,
     backup_path: str | Path,
     copy_fn: Optional[CopyFn] = None,
+    *,
+    require_source_identity: bool = False,
 ) -> Tuple[Dict[str, object], Optional[ReplacementAuthorization]]:
-    """Create replacement authority only after a fresh verified backup."""
+    """Create replacement authority only after a fresh verified backup.
+
+    The production CLI enables ``require_source_identity`` so the immutable
+    AzzyAI policy is checked against the same source snapshot that is bound to
+    the replacement authorization.  This closes the gap between a standalone
+    preflight and F-07 authorization if the staged source is swapped in between.
+    """
 
     source = Path(source_path)
     destination = Path(destination_path)
@@ -423,6 +562,8 @@ def authorize_user_ai_replacement(
         "backup": str(backup),
         "backup_verified": False,
         "replacement_authorized": False,
+        "source_identity_verified": False,
+        "source_tree_identity": None,
         "mutation": False,
         "result": "blocked",
         "reason": "not-run",
@@ -451,6 +592,18 @@ def authorize_user_ai_replacement(
             result["reason"] = "source, destination, and backup paths must not contain symlink components"
             return result, None
         source_snapshot = _snapshot_tree(source)
+        if require_source_identity:
+            policy = AUTHORIZED_AZZYAI_SOURCE
+            policy_error = _valid_source_policy(policy)
+            if policy_error:
+                result["reason"] = policy_error
+                return result, None
+            source_digest = _tree_identity(source_snapshot)
+            result["source_tree_identity"] = source_digest
+            result["source_identity_verified"] = source_digest == policy.expected_tree_sha256
+            if not result["source_identity_verified"]:
+                result["reason"] = "staged AzzyAI source does not match reviewed commit content"
+                return result, None
         destination_snapshot = _snapshot_tree(destination)
         source_identity = _identity(source)
         destination_identity = _identity(destination)
@@ -493,6 +646,7 @@ def authorize_user_ai_replacement(
         {
             "backup_verified": True,
             "replacement_authorized": True,
+            "source_identity_verified": result["source_identity_verified"],
             "result": "success",
             "reason": "fresh USER_AI backup verified; replacement authorized for bound paths",
         }
@@ -789,8 +943,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     backup = subparsers.add_parser("backup", help="backup and verify an existing USER_AI tree")
     backup.add_argument("--source", required=True)
     backup.add_argument("--destination", required=True)
+    source_check = subparsers.add_parser(
+        "verify-source",
+        aliases=["source-check"],
+        help="verify an extracted AzzyAI USER_AI tree against the reviewed commit policy",
+    )
+    source_check.add_argument("--source", required=True)
+    source_check.add_argument("--source-repository", required=True)
+    source_check.add_argument("--source-commit", required=True)
+    policy = subparsers.add_parser(
+        "source-policy",
+        help="print the reviewed AzzyAI source identity used by verification",
+    )
+    policy.add_argument(
+        "--field",
+        choices=("repository", "commit", "content-scope", "tree-sha256"),
+        help="print one policy value for use by a shell acquisition command",
+    )
     replace = subparsers.add_parser("replace", help="backup, authorize, and safely replace USER_AI")
     replace.add_argument("--source", required=True, help="staged AzzyAI USER_AI directory")
+    replace.add_argument("--source-repository", required=True, help="repository claimed for the staged source")
+    replace.add_argument("--source-commit", required=True, help="full immutable commit claimed for the staged source")
     replace.add_argument("--destination", required=True, help="existing game USER_AI directory")
     replace.add_argument("--backup", required=True, help="external backup destination")
     replace.add_argument(
@@ -810,15 +983,61 @@ def main(argv: Optional[list[str]] = None) -> int:
                 result["result"] = "blocked"
                 result["reason"] = "backup verified but durable evidence could not be persisted"
         return _emit(result)
+    if args.area in ("verify-source", "source-check"):
+        return _emit(
+            verify_azzyai_source(
+                args.source,
+                observed_repository=args.source_repository,
+                observed_commit=args.source_commit,
+            )
+        )
+    if args.area == "source-policy":
+        values = {
+            "repository": AUTHORIZED_AZZYAI_SOURCE.repository,
+            "commit": AUTHORIZED_AZZYAI_SOURCE.commit,
+            "content_scope": AUTHORIZED_AZZYAI_SOURCE.content_scope,
+            "expected_tree_sha256": AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+        }
+        if args.field:
+            field_keys = {
+                "repository": "repository",
+                "commit": "commit",
+                "content-scope": "content_scope",
+                "tree-sha256": "expected_tree_sha256",
+            }
+            print(values[field_keys[args.field]])
+            return 0
+        return _emit(
+            {
+                "operation": "azzyai-source-policy",
+                "artifact": "AzzyAI",
+                **values,
+                "signature_status": "not-verified",
+                "result": "success",
+                "reason": "reviewed source identity policy",
+            }
+        )
     if args.area == "replace":
+        source_verification = verify_azzyai_source(
+            args.source,
+            observed_repository=args.source_repository,
+            observed_commit=args.source_commit,
+        )
+        if source_verification["result"] != "success":
+            return _emit(source_verification)
         authorization_result, authorization = authorize_user_ai_replacement(
-            args.source, args.destination, args.backup
+            args.source,
+            args.destination,
+            args.backup,
+            require_source_identity=True,
         )
         if authorization is None:
+            authorization_result["source_verification"] = source_verification
             return _emit(authorization_result)
         evidence_path = args.evidence or f"{args.backup}.evidence.jsonl"
         replacement_result = replace_user_ai(authorization, evidence_path=evidence_path)
         replacement_result["authorization"] = authorization_result
+        replacement_result["source_verification"] = source_verification
         return _emit(replacement_result)
     parser.error("unsupported operation")
     return 2

@@ -1160,6 +1160,7 @@ def test_scope() -> None:
         "tests/test_settings_runtime.py",
         "tests/test_uaro.py",
     }
+    allowed_fixture_prefixes = ("tests/fixtures/azzyai-dc014477/",)
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
@@ -1176,7 +1177,13 @@ def test_scope() -> None:
         if "/__pycache__/" in f"/{value}" or value.endswith(".pyc"):
             continue
         paths.add(value)
-    require(paths <= allowed, f"unexpected changed paths: {sorted(paths)}")
+    unexpected = {
+        path
+        for path in paths
+        if path not in allowed
+        and not any(path.startswith(prefix) for prefix in allowed_fixture_prefixes)
+    }
+    require(not unexpected, f"unexpected changed paths: {sorted(unexpected)}")
 
 
 def run_all() -> int:

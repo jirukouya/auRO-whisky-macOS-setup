@@ -16,6 +16,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+AZZYAI_FIXTURE = ROOT / "tests" / "fixtures" / "azzyai-dc014477" / "USER_AI"
 sys.path.insert(0, str(ROOT / "scripts"))
 import azzyai  # noqa: E402
 
@@ -432,7 +433,8 @@ class AzzyAiReplacementTests(unittest.TestCase):
         self.assertEqual(tree_bytes(destination), before)
 
     def test_cli_emits_structured_success(self) -> None:
-        staged = self.tree("staged", {"AI.lua": b"new"})
+        staged = self.root / "staged"
+        shutil.copytree(AZZYAI_FIXTURE, staged)
         destination = self.tree("USER_AI", {"AI.lua": b"old"})
         process = subprocess.run(
             [
@@ -441,6 +443,10 @@ class AzzyAiReplacementTests(unittest.TestCase):
                 "replace",
                 "--source",
                 str(staged),
+                "--source-repository",
+                azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
+                "--source-commit",
+                azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
                 "--destination",
                 str(destination),
                 "--backup",
@@ -454,6 +460,7 @@ class AzzyAiReplacementTests(unittest.TestCase):
         payload = json.loads(process.stdout)
         self.assertTrue(payload["replacement_verified"])
         self.assertTrue(payload["authorization"]["backup_verified"])
+        self.assertTrue(payload["authorization"]["source_identity_verified"])
         self.assertEqual(payload["evidence"]["status"], "succeeded")
         evidence_path = Path(payload["evidence"]["path"])
         self.assertEqual(evidence_path.stat().st_mode & 0o777, 0o600)
@@ -522,6 +529,148 @@ class AzzyAiReplacementTests(unittest.TestCase):
             ["replacement-authorized", "replacement-complete", "replacement-rollback"],
         )
         self.assertEqual(records[-1]["result"], "blocked")
+
+
+class AzzyAiSourceVerificationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="azzyai-source-")
+        self.root = Path(self.temp.name)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def source(self) -> Path:
+        path = self.root / "USER_AI"
+        shutil.copytree(AZZYAI_FIXTURE, path)
+        return path
+
+    def verify(self, source: Path, **kwargs: object) -> dict[str, object]:
+        values = {
+            "observed_repository": azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
+            "observed_commit": azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
+        }
+        values.update(kwargs)
+        return azzyai.verify_azzyai_source(source, **values)  # type: ignore[arg-type]
+
+    def test_exact_authorized_source_passes(self) -> None:
+        result = self.verify(self.source())
+        self.assertEqual(result["result"], "success")
+        self.assertTrue(result["source_claim_verified"])
+        self.assertTrue(result["identity_verified"])
+        self.assertTrue(result["content_verified"])
+        self.assertEqual(
+            result["observed_tree_identity"],
+            azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+        )
+        self.assertEqual(result["signature_status"], "not-verified")
+
+    def test_one_file_byte_change_blocks(self) -> None:
+        source = self.source()
+        path = source / "AI_main.lua"
+        path.write_bytes(path.read_bytes() + b"tampered")
+        result = self.verify(source)
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["source_claim_verified"])
+        self.assertFalse(result["identity_verified"])
+        self.assertFalse(result["content_verified"])
+
+    def test_missing_required_file_blocks(self) -> None:
+        source = self.source()
+        (source / "AI.lua").unlink()
+        result = self.verify(source)
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["source_claim_verified"])
+        self.assertFalse(result["identity_verified"])
+        self.assertFalse(result["content_verified"])
+
+    def test_unexpected_file_blocks_exact_tree(self) -> None:
+        source = self.source()
+        (source / "unexpected.lua").write_bytes(b"unexpected")
+        result = self.verify(source)
+        self.assertEqual(result["result"], "blocked")
+
+    def test_wrong_commit_blocks(self) -> None:
+        result = self.verify(self.source(), observed_commit="master")
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["source_claim_verified"])
+        self.assertFalse(result["identity_verified"])
+
+    def test_malformed_policy_blocks_without_recomputing_authority(self) -> None:
+        source = self.source()
+        malformed = azzyai.AzzyAiSourcePolicy(
+            repository=azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
+            commit="master",
+            content_scope="USER_AI",
+            expected_tree_sha256=azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+        )
+        original = azzyai.AUTHORIZED_AZZYAI_SOURCE
+        azzyai.AUTHORIZED_AZZYAI_SOURCE = malformed
+        try:
+            result = azzyai.verify_azzyai_source(
+                source,
+                observed_repository=original.repository,
+                observed_commit=original.commit,
+            )
+        finally:
+            azzyai.AUTHORIZED_AZZYAI_SOURCE = original
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["source_claim_verified"])
+        self.assertIn("policy is malformed", result["reason"])
+        self.assertIsNone(result["observed_tree_identity"])
+
+    def test_wrong_repository_blocks(self) -> None:
+        result = self.verify(self.source(), observed_repository="https://example.invalid/AzzyAI")
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["identity_verified"])
+
+    def test_symlink_injected_into_candidate_blocks(self) -> None:
+        source = self.source()
+        (source / "link.lua").symlink_to("AI.lua")
+        result = self.verify(source)
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["source_claim_verified"])
+        self.assertFalse(result["identity_verified"])
+        self.assertFalse(result["content_verified"])
+
+    def test_candidate_expected_digest_cannot_replace_project_policy(self) -> None:
+        source = self.source()
+        result = self.verify(source)
+        self.assertEqual(
+            result["expected_tree_identity"],
+            azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+        )
+        with self.assertRaises(TypeError):
+            azzyai.verify_azzyai_source(  # type: ignore[call-arg]
+                source,
+                observed_repository=azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
+                observed_commit=azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
+                expected_tree_sha256="0" * 64,
+            )
+
+    def test_pinned_commit_remains_selected_when_master_changes(self) -> None:
+        source = self.source()
+        (source / "AI.lua").write_bytes(b"future-master-change")
+        result = self.verify(source)
+        self.assertEqual(result["authorized_commit"], azzyai.AUTHORIZED_AZZYAI_SOURCE.commit)
+        self.assertEqual(result["result"], "blocked")
+
+    def test_source_swap_after_preflight_blocks_production_authorization(self) -> None:
+        source = self.source()
+        preflight = self.verify(source)
+        self.assertEqual(preflight["result"], "success")
+        (source / "AI.lua").write_bytes(b"attacker-controlled source")
+        destination = self.root / "destination"
+        destination.mkdir()
+        (destination / "AI.lua").write_bytes(b"old")
+        result, token = azzyai.authorize_user_ai_replacement(
+            source,
+            destination,
+            self.root / "backup",
+            require_source_identity=True,
+        )
+        self.assertIsNone(token)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("does not match reviewed commit content", result["reason"])
 
 
 if __name__ == "__main__":

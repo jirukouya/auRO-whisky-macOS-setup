@@ -27,9 +27,10 @@ test suite:
 
     PYTHONDONTWRITEBYTECODE=1 python3 -B tests/test_azzyai.py
 
-That suite uses temporary USER_AI trees only. It does not invoke Whisky, Wine,
-uaRO, a real launcher, or a deletion command. F-04 external artifact
-provenance and Phase 2D remain outside this harness. Successful CLI replacement
+That suite uses a checked-in USER_AI snapshot of the reviewed AzzyAI commit plus
+temporary copies and tampered variants. It does not invoke Whisky, Wine,
+uaRO, a real launcher, or a deletion command. F-04 network acquisition and
+signer provenance, plus Phase 2D, remain outside this harness. Successful CLI replacement
 also exercises the small descriptive JSONL evidence sidecar; the sidecar is not
 read by the replacement gate. Tests also inject evidence-write failures to
 confirm backup CLI failure status and restoration after a post-exchange append
