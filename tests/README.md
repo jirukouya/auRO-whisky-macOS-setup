@@ -45,5 +45,7 @@ Phase Envelope validation. These tests prove repository control semantics only;
 they do not prove a live Whisky/Wine installation or any external service.
 
 The Whisky trust-boundary tests verify the fixed 2.3.5 source identity and
-Homebrew-anchored SHA-256 content policy. They reject mutable sources, wrong
-bytes, symlinks, malformed policy, and candidate-supplied trust values.
+SHA-256 content policy anchored to an immutable Homebrew cask revision. They
+reject mutable sources, wrong bytes, symlinks, malformed policy, mutated policy
+constants, and candidate-supplied trust values; they also guard the documented
+fail-closed extraction sequence.

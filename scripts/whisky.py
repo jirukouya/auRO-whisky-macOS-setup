@@ -19,16 +19,11 @@ from typing import Any, Dict, Optional
 WHISKY_VERSION = "2.3.5"
 WHISKY_REPOSITORY = "https://github.com/IsaacMarovitz/Whisky"
 WHISKY_RELEASE_TAG = f"v{WHISKY_VERSION}"
-WHISKY_OFFICIAL_SOURCE = (
-    f"{WHISKY_REPOSITORY}/releases/download/{WHISKY_RELEASE_TAG}/Whisky.zip"
-)
-WHISKY_PROJECT_FALLBACK_SOURCE = (
-    "https://github.com/jirukouya/auRO-whisky-macOS-setup/"
-    "releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"
-)
+WHISKY_OFFICIAL_SOURCE = "https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip"
+WHISKY_PROJECT_FALLBACK_SOURCE = "https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"
 # Official Homebrew cask metadata, reviewed 2026-10-03.
 WHISKY_EXPECTED_SHA256 = "62fce6aa7034cc84e4809a35cb46af37e7932368102450dd2b3d4a18cbc7b94e"
-WHISKY_POLICY_ANCHOR = "https://raw.githubusercontent.com/Homebrew/homebrew-cask/HEAD/Casks/w/whisky.rb"
+WHISKY_POLICY_ANCHOR = "https://raw.githubusercontent.com/Homebrew/homebrew-cask/87180be1e381499a994990a044944580d180be44/Casks/w/whisky.rb"
 
 
 class WhiskyPolicyError(ValueError):
@@ -43,6 +38,12 @@ def _policy_error() -> Optional[str]:
         return "authorized Whisky release tag policy is malformed"
     if WHISKY_REPOSITORY != "https://github.com/IsaacMarovitz/Whisky":
         return "authorized Whisky repository policy is malformed"
+    if WHISKY_OFFICIAL_SOURCE != "https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip":
+        return "authorized Whisky official source policy is malformed"
+    if WHISKY_PROJECT_FALLBACK_SOURCE != "https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip":
+        return "authorized Whisky fallback source policy is malformed"
+    if WHISKY_POLICY_ANCHOR != "https://raw.githubusercontent.com/Homebrew/homebrew-cask/87180be1e381499a994990a044944580d180be44/Casks/w/whisky.rb":
+        return "authorized Whisky policy anchor is malformed"
     if len(WHISKY_EXPECTED_SHA256) != 64 or any(
         character not in "0123456789abcdef" for character in WHISKY_EXPECTED_SHA256
     ):

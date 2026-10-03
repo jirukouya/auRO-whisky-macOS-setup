@@ -336,41 +336,49 @@ This can also prompt for the Mac's admin/login password on some machines — sam
 
 ## Step 3 — Whisky.app
 
-**Check first — don't install unconditionally.** `2a` may already have flagged Whisky as present, but treat this as the actual gate rather than something to remember from a few steps back — running `brew install --cask whisky` against an already-installed, non-Homebrew-managed `Whisky.app` throws AppleEvents "not permitted" errors while brew tries to reconcile it, a noisy failure for what should be a no-op:
+**Check first — an existing app is not accepted as verified.** `2a` may already have flagged Whisky as present, but an installed bundle does not prove the fixed 2.3.5 archive identity. Stop here instead of silently treating a stale or tampered app as trusted; rerun this step after the verified archive has been acquired and installed.
 
 ```bash
-ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
-command -v whisky
+set -e
+if [[ -d /Applications/Whisky.app || -d ~/Applications/Whisky.app ]] || command -v whisky >/dev/null 2>&1; then
+  echo "BLOCKED: an existing Whisky installation is UNCONFIRMED; acquire the fixed 2.3.5 archive before continuing" >&2
+  exit 1
+fi
 ```
 
-If either printed something, Whisky's already installed — skip straight to "Locate the CLI" below, don't run the install commands.
-
-If nothing printed, try Homebrew — **do not skip this attempt on the assumption the cask is disabled.** Verify the result yourself rather than trusting the exit code alone, since a disabled/no-op cask can still exit 0 while installing nothing.
+The deprecated Homebrew cask remains a research source for the fixed digest, but its live metadata is mutable. The v1 acquisition route therefore uses the exact upstream release URL below; Homebrew is not treated as an independent provenance or identity proof.
 
 ```bash
-brew install --cask whisky
-ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
-```
-
-If neither path exists after that, fall back to the GitHub release:
-
-```bash
+set -e
 WHISKY_SOURCE="https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip"
-curl -fL --progress-bar -o /tmp/Whisky.zip "$WHISKY_SOURCE"
-python3 scripts/whisky.py verify-download --file /tmp/Whisky.zip --source "$WHISKY_SOURCE"
-ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
-cp -R /tmp/Whisky-extract/Whisky.app /Applications/
+WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
+WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
+curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
+# Re-read and verify immediately before extraction so a replaced pathname cannot pass a stale check.
+python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
+test -d "$WHISKY_EXTRACT" && test -z "$(find "$WHISKY_EXTRACT" -mindepth 1 -print -quit)"
+ditto -xk "$WHISKY_ZIP" "$WHISKY_EXTRACT"
+test -d "$WHISKY_EXTRACT/Whisky.app"
+cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
 **If that download itself fails** (Whisky is unmaintained upstream, so a vanished tag/asset is possible): fall back to this repo's archived copy. The fallback is accepted only when its bytes match the same fixed release digest; its source provenance remains explicitly unconfirmed. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
+set -e
 WHISKY_SOURCE="https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"
-curl -fL --progress-bar -o /tmp/Whisky.zip "$WHISKY_SOURCE"
-python3 scripts/whisky.py verify-download --file /tmp/Whisky.zip --source "$WHISKY_SOURCE"
-ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
-cp -R /tmp/Whisky-extract/Whisky.app /Applications/
+WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
+WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
+curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
+# Re-read and verify immediately before extraction so a replaced pathname cannot pass a stale check.
+python3 scripts/whisky.py verify-download --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE"
+test -d "$WHISKY_EXTRACT" && test -z "$(find "$WHISKY_EXTRACT" -mindepth 1 -print -quit)"
+ditto -xk "$WHISKY_ZIP" "$WHISKY_EXTRACT"
+test -d "$WHISKY_EXTRACT/Whisky.app"
+cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 

@@ -9,8 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ### Added
 - Added an artifact-specific Whisky 2.3.5 source policy and SHA-256 download verifier.
   Official and project fallback archives must match the digest anchored by the
-  Homebrew cask metadata before extraction; fallback provenance remains explicit.
-
+  immutable Homebrew cask revision `87180be1e381499a994990a044944580d180be44`
+  before extraction; fallback provenance remains explicit.
 - Added a thin project-level `AGENTS.md` root contract and an evidence-only
   `scripts/engineering_control.py` control plane for repository snapshots,
   stale-checkpoint reconciliation, volatile state boundaries, Phase Envelope
@@ -20,6 +20,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   ambiguous control-plane states.
 
 ### Changed
+- Whisky installation now stops on any pre-existing unverified app and uses
+  only the exact upstream release or byte-anchored project fallback. Download
+  verification is fail-closed, repeated immediately before extraction, and
+  extracts into a fresh temporary directory.
 - Reworked `README.md` into a route-based front door for fresh installs, existing installs, verify-only checks, repairs, uninstall, and AzzyAI tasks.
 - Removed the stale hardcoded release heading and corrected the repository description to reflect its supporting references.
 - Added the AI-versus-user responsibility boundary, three-gate success summary, evidence-status notes, symptom routing, Xcode Command Line Tools requirement, and safer uninstall explanation.

@@ -16,6 +16,23 @@ import whisky  # noqa: E402
 
 
 class WhiskyPolicyTests(unittest.TestCase):
+    def test_skill_download_routes_fail_closed_and_recheck_before_extract(self) -> None:
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        start = skill.index("## Step 3 — Whisky.app")
+        end = skill.index("## Step 4 — WhiskyWine runtime", start)
+        section = skill[start:end]
+        self.assertIn("an existing Whisky installation is UNCONFIRMED", section)
+        self.assertEqual(section.count("python3 scripts/whisky.py verify-download"), 4)
+        for source in ("IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip", "auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"):
+            block_start = section.index(source)
+            block_start = section.rfind("```bash", 0, block_start)
+            block_end = section.index("```", block_start + len("```bash"))
+            block = section[block_start:block_end]
+            self.assertIn("set -e", block)
+            self.assertEqual(block.count("verify-download"), 2)
+            self.assertLess(block.rfind("verify-download"), block.index("ditto -xk"))
+            self.assertIn("mktemp -d /tmp/Whisky-extract.", block)
+
     def test_source_policy_is_fixed_and_descriptive(self) -> None:
         policy = whisky.source_policy()
         self.assertEqual(policy["result"], "success")
@@ -39,6 +56,21 @@ class WhiskyPolicyTests(unittest.TestCase):
                 result = whisky.verify_download(path, source)
                 self.assertEqual(result["result"], "blocked")
                 self.assertIn("exact authorized", result["reason"])
+
+    def test_policy_rejects_mutated_source_and_anchor_constants(self) -> None:
+        mutations = (
+            ("WHISKY_OFFICIAL_SOURCE", "https://example.invalid/current.zip", "official source"),
+            ("WHISKY_PROJECT_FALLBACK_SOURCE", "https://example.invalid/fallback.zip", "fallback source"),
+            ("WHISKY_POLICY_ANCHOR", "https://example.invalid/policy.rb", "policy anchor"),
+        )
+        for name, value, label in mutations:
+            with self.subTest(label=label), mock.patch.object(whisky, name, value):
+                result = whisky.source_policy()
+            self.assertEqual(result["result"], "blocked")
+            self.assertIn("malformed", result["reason"])
+
+    def test_policy_anchor_is_immutable_reviewed_cask_revision(self) -> None:
+        self.assertIn("/87180be1e381499a994990a044944580d180be44/", whisky.WHISKY_POLICY_ANCHOR)
 
     def test_matching_official_bytes_pass(self) -> None:
         payload = b"official fixture bytes"
