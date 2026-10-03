@@ -101,4 +101,6 @@ contracts, and deterministic evidence before adopting it.
 scripts/engineering_control.py snapshot --repo .
 scripts/engineering_control.py reconcile --repo . --state-file <outside-repo.json>
 scripts/engineering_control.py envelope validate --repo . --file <envelope.json>
+scripts/engineering_control.py state init --repo . --state-file <outside-repo.json> --program-goal "<goal>" --phase <phase> --next-action "<action>"
+scripts/engineering_control.py state update --repo . --state-file <outside-repo.json> [--phase-state <state>] [--last-verified-head <commit>]
 ```
