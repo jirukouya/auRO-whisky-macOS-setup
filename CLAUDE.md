@@ -45,8 +45,8 @@ not just one or two.**
    the live install process.
 
 4. **Claude's persistent memory** (not part of this git repo at all — lives
-   at `~/.claude/projects/-Users-derekho/memory/` on the maintainer's
-   machine, independent of any commit). Holds feedback/preference/decision
+   in an external maintainer-local memory directory, independent of any
+   commit). Holds feedback/preference/decision
    history that isn't code or install-process content (e.g. why certain
    proposals were rejected, how to write commit messages). **A human reader
    of this repo — including an external contributor — cannot see this

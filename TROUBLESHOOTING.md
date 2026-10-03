@@ -57,7 +57,7 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 
 | Category | Symptom | Cause | Fix |
 |---|---|---|---|
-| Install/Homebrew | `brew install --cask whisky` exits 0 but installs nothing | Cask can be silently disabled upstream | Verify with `find_whisky_app`-equivalent check; fall back to GitHub release zip only if truly absent |
+| Install/Homebrew | `brew install --cask whisky` exits 0 but installs nothing | The deprecated cask can be silently disabled upstream | Treat the cask as a diagnostic probe only; follow Step 3's exact v2.3.5 release verifier, and stop on any pre-existing unverified app |
 | Runtime/Wine | `command not found: wine64` | WhiskyWine runtime never downloaded (dead CDN) | Manually install from Internet Archive snapshot (Step 4); never rely on Whisky's own downloader |
 | Runtime/Wine | Whisky's "Install GPTK" shows instant success but nothing works | Download URL 404s, Whisky doesn't surface the error | Ignore that button; install WhiskyWine manually |
 | Install/Download | Empty folder after `unzip` | macOS's bundled unzip can't handle ZIP64 archives >4GB | Always use `ditto -xk` |

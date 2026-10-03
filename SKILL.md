@@ -106,9 +106,21 @@ Every completion claim must pass three independent gates:
 
 Passing only one gate is `UNCONFIRMED`, not complete. Startup alone is not a behavior test, and a generated launcher or manifest is not live-runtime evidence.
 
+### Verify-only capability boundary (F-01)
+
+When the route is verify, this skill authorizes evidence collection only:
+
+- **Allowed:** read, inspect, query, hash, compare, and non-mutating process inspection.
+- **Not authorized:** write, patch, install, delete, update, apply settings, registry writes, downloads, codesign, registration, automatic repair, or mutable patcher/game launch.
+
+If stronger behavior evidence would require a mutating action, report UNCONFIRMED at that gate. Do not mutate the installation to turn UNCONFIRMED into PASS.
+
+A command denylist is only a regression heuristic. It is not complete capability enforcement; the verify-only route still requires reviewing the actual commands and their observable effects.
+
+
 - **Before answering any "what have we already tried/decided/fixed for this project" question — especially a comparative one, or one about a symptom that might already be a documented issue — read this repo's root `CLAUDE.md` first, then check every source it points to** (commit messages, `CHANGELOG.md`, `TROUBLESHOOTING.md`, and `git notes` — see `CLAUDE.md` for why notes need an explicit `git fetch` to even become visible). Don't answer from whichever one source happens to come to mind first; a past run of this exact skill answered a historical-comparison question from `git log` alone and missed that `CHANGELOG.md` had the closer answer. This applies to *any* agent executing this file, not just one with prior conversation context — that's the whole reason it's written here instead of only remembered.
-- **Probe, don't assume, especially about what's "dead."** The premise "the Homebrew cask is disabled" turned out to be false on one real machine tested — it installed and worked fine. Try the normal path first every time; only fall back to a workaround if the normal path genuinely fails on *this* machine, right now.
-- **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an unconditional `brew install --cask whisky` threw noisy "not permitted" errors against an already-installed app, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
+- **Probe, don't assume, especially about what's "dead."** A live package-manager entry can still be mutable and unsuitable as a v1 identity anchor. The Whisky route records the Homebrew cask as research evidence and uses the fixed upstream release path; check the actual machine state before any install or recovery action.
+- **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an existing Whisky app is now blocked as unverified, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
 - **A syntax-valid file is not a working file.** `plutil -lint` only checks that a plist parses as XML — it says nothing about whether the app that reads it can decode it into the shape it expects. Decode-test configs, don't just lint them.
 - **A file existing right after you wrote it is not proof it will still be there in 30 seconds.** On a Mac with iCloud Drive "Desktop & Documents" sync enabled, files written under `~/Documents` *and* `~/Downloads` can be silently relocated into `~/Library/Mobile Documents/com~apple~CloudDocs/...` asynchronously, tens of seconds after creation — long after an immediate check would have reported "fine."
 - **After any binary patch, byte-diff against a backup.** Don't trust that a patch did only what you intended — prove it with `cmp -l`.
@@ -227,7 +239,7 @@ Two independent things to check here:
 - **If `/Applications/UaRO.app` exists (old name, pre-2026-07-27)**, rename it to `UaRO Patcher.app` per Step 11's current naming, updating `Info.plist` (`CFBundleName`/`CFBundleDisplayName`/`CFBundleIdentifier`/`CFBundleExecutable`) and the script filename (`uaro-launch` → `uaro-patcher`) to match, then re-sign and re-register — don't leave an install half-migrated with the old bundle name but new internal content.
 - **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists**, also check whether it has Step 11's crash-dialog mitigation: `grep -q ShowCrashDialog "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"`. If it doesn't, tell the user: *"There's also a fix available that stops the known 'Program Error' popup from appearing at all — want me to update the launcher?"* Rebuild the script per Step 11's current version if they say yes.
 - **If `/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher` exists but lacks the Launch Game handoff check** — `grep -q 'pgrep -f "uaRO.exe"' "/Applications/UaRO Patcher.app/Contents/MacOS/uaro-patcher"` finds nothing — it has the known ghost-second-patcher bug (clicking the patcher's Launch Game button also spawns a second patcher window; see `TROUBLESHOOTING.md`). Tell the user and rebuild per Step 11's current version if they say yes, then re-sign.
-- **If `/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings` exists**, check whether it has the `return 0` guard at the end of `_patch_setup_exe`: `grep -q 'return 0' "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings"`. If it doesn't, this launcher has the known silent-failure bug (it does nothing when double-clicked once `setup.exe` is already patched — the normal state; see `TROUBLESHOOTING.md`). Tell the user: *"Heads up — this install's `UaRO Settings` launcher has a known bug where it silently fails to open once the graphics tool is already patched. Want me to update it?"* Rebuild the script per Step 11's current version if they say yes, then re-sign per the standing rule below.
+- **If `/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings` exists**, verify that it contains the bundle-local runtime verifier and deterministic executor calls from Step 11 (`settings_runtime_verify.py`, `fcom apply`, and an independent `fcom check`). If any is absent, tell the user the launcher predates the deterministic Settings route and rebuild it from Step 11, then re-sign per the standing rule below.
 - **If `/Applications/UaRO Game.app` is missing (install predates 2026-07-27)**, offer to add it per Step 11's current version: *"There's now a third launcher option, `UaRO Game`, that skips the patcher for a faster relaunch — it comes with a real trade-off (see Step 11/`TROUBLESHOOTING.md`) I want you to be aware of before I add it. Want me to build it?"* Only build it if the user says yes — don't add it silently, since accepting its risk is the user's call, not a default.
 - **If `/opt/homebrew/bin/uaro-cli` is missing (install predates 2026-07-27)**, mention it's available and offer to add it per the *Optional: uaro-cli command-line helper* section below — this one carries no meaningful risk (it only wraps the kill/launch/repair operations this file already documents doing manually), so it's fine to build it as soon as the user says they'd find it useful, no special caution needed the way `UaRO Game.app` requires.
 - **Whenever any launcher script gets edited here** (not just at first build) — re-run Step 11's `codesign --force --deep --sign -` on that bundle afterward, and check whether the same edit belongs in the other launchers too (see Step 11's standing rule on this) before moving on.
@@ -293,11 +305,11 @@ This exact value matches Step 6's *first* `if` branch (already staged, nothing t
 
 ## Phase A — Environment prep (Steps 1–4)
 
-Homebrew, Rosetta 2, Whisky.app, and the WhiskyWine runtime — the four things this install needs in place before there's anywhere to put a bottle or a game.
+Homebrew, Rosetta 2, the fixed Whisky.app release, and the WhiskyWine runtime — the four things this install needs in place before there's anywhere to put a bottle or a game.
 
 ## Step 1 — Homebrew
 
-**Before running this, give the user one line of why:** *"First up: Homebrew — the tool this whole setup runs through, including installing Whisky itself in a couple steps. Along the way, this will also install `git` and a small part of Xcode (just the Command Line Tools, not the full app) — that's normal plumbing this process needs, not something you need to know how to use."*
+**Before running this, give the user one line of why:** *"First up: Homebrew — the package tool this setup uses for supporting utilities. Along the way, this will also install `git` and a small part of Xcode (just the Command Line Tools, not the full app) — that's normal plumbing this process needs, not something you need to know how to use."*
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -324,43 +336,45 @@ This can also prompt for the Mac's admin/login password on some machines — sam
 
 ## Step 3 — Whisky.app
 
-**Check first — don't install unconditionally.** `2a` may already have flagged Whisky as present, but treat this as the actual gate rather than something to remember from a few steps back — running `brew install --cask whisky` against an already-installed, non-Homebrew-managed `Whisky.app` throws AppleEvents "not permitted" errors while brew tries to reconcile it, a noisy failure for what should be a no-op:
+**Check first — an existing app is not accepted as verified.** `2a` may already have flagged Whisky as present, but an installed bundle does not prove the fixed 2.3.5 archive identity. Stop here instead of silently treating a stale or tampered app as trusted; rerun this step after the verified archive has been acquired and installed.
 
 ```bash
-ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
-command -v whisky
+set -e
+if [[ -d /Applications/Whisky.app || -d ~/Applications/Whisky.app ]] || command -v whisky >/dev/null 2>&1; then
+  echo "BLOCKED: an existing Whisky installation is UNCONFIRMED; acquire the fixed 2.3.5 archive before continuing" >&2
+  exit 1
+fi
 ```
 
-If either printed something, Whisky's already installed — skip straight to "Locate the CLI" below, don't run the install commands.
-
-If nothing printed, try Homebrew — **do not skip this attempt on the assumption the cask is disabled.** Verify the result yourself rather than trusting the exit code alone, since a disabled/no-op cask can still exit 0 while installing nothing.
+The deprecated Homebrew cask remains a research source for the fixed digest, but its live metadata is mutable. The v1 acquisition route therefore uses the exact upstream release URL below; Homebrew is not treated as an independent provenance or identity proof.
 
 ```bash
-brew install --cask whisky
-ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
-```
-
-If neither path exists after that, fall back to the GitHub release:
-
-```bash
-curl -fL --progress-bar -o /tmp/Whisky.zip \
-  https://github.com/Whisky-App/Whisky/releases/download/v2.3.5/Whisky.zip
-ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
-cp -R /tmp/Whisky-extract/Whisky.app /Applications/
+set -e
+WHISKY_SOURCE="https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip"
+WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
+WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
+curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-and-extract --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE" --destination "$WHISKY_EXTRACT"
+test -d "$WHISKY_EXTRACT/Whisky.app"
+cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
-**If that download itself fails** (Whisky's own upstream `Whisky-App/Whisky` GitHub release is a single point of failure — Whisky is unmaintained upstream, so a vanished tag/asset is a real possibility, not paranoia): fall back to this repo's own archived copy instead of giving up. This repo is public, so plain `curl` works with no auth needed:
+**If that download itself fails** (Whisky is unmaintained upstream, so a vanished tag/asset is possible): fall back to this repo's archived copy. The fallback is accepted only when its bytes match the same fixed release digest; its source provenance remains explicitly unconfirmed. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
-curl -fL --progress-bar -o /tmp/Whisky.zip \
-  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip
-ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
-cp -R /tmp/Whisky-extract/Whisky.app /Applications/
+set -e
+WHISKY_SOURCE="https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"
+WHISKY_ZIP="$(mktemp /tmp/Whisky.XXXXXX.zip)"
+WHISKY_EXTRACT="$(mktemp -d /tmp/Whisky-extract.XXXXXX)"
+curl -fL --progress-bar -o "$WHISKY_ZIP" "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-and-extract --file "$WHISKY_ZIP" --source "$WHISKY_SOURCE" --destination "$WHISKY_EXTRACT"
+test -d "$WHISKY_EXTRACT/Whisky.app"
+cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
-Locate the CLI (brew symlink first, then inside whichever Whisky.app was found):
+Locate the CLI inside the verified Whisky.app (a pre-existing CLI was blocked above):
 
 ```bash
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
@@ -379,9 +393,10 @@ plutil -extract version.major xml1 -o - "$SUPPORT/Libraries/WhiskyWineVersion.pl
 
 If that printed both a version number and something like `wine-7.7`, the runtime's already installed and working — skip straight to Step 5, don't re-download.
 
-If either came back empty, fetch it. Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404) — never rely on Whisky's own "Install GPTK" button either, it shows a fake instant success and leaves an empty folder. The Internet Archive snapshot once documented here as the fallback is now unreliable itself — three consecutive live attempts hung/failed to connect rather than returning even an error — so **go straight to this repo's own archived copy** (byte-identical, confirmed reachable, no auth needed since this repo is public):
+If either came back empty, fetch it. Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404) — never rely on Whisky's own "Install GPTK" button either, it shows a fake instant success and leaves an empty folder. The Internet Archive snapshot once documented here as the fallback is now unreliable itself — three consecutive live attempts hung/failed to connect rather than returning even an error — so **use this repo's archived copy as the first recovery source** (its runtime archive has no independently anchored digest in v1; content provenance remains unconfirmed, and the repo is public):
 
 ```bash
+set -e
 mkdir -p ~/Downloads   # transient scratch only — the .zip itself isn't at risk the way an extracted app bundle is, but move fast
 caffeinate -i curl -fL --progress-bar --max-time 300 -o ~/Downloads/WhiskyWine-Libraries.zip \
   https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
@@ -389,9 +404,10 @@ caffeinate -i curl -fL --progress-bar --max-time 300 -o ~/Downloads/WhiskyWine-L
 
 **`caffeinate -i` wraps this download** — unlike a browser download (which requests its own "stay awake" assertion automatically), a `curl` call run this way has no such protection. On a laptop that's idle-timeout-eligible, this download can take a few minutes; without `caffeinate`, the Mac going to sleep partway through would stall or corrupt it, and it isn't obvious to a user why. `caffeinate` here just holds the system awake for exactly as long as `curl` is running, then releases automatically.
 
-**If this repo's own release is ever unreachable too** (GitHub outage, etc.), the Internet Archive snapshot is a last-resort second fallback — same URL as before this version, now with a short timeout so a dead endpoint fails fast instead of hanging:
+**If this repo's own release is ever unreachable too** (GitHub outage, etc.), the Internet Archive snapshot is a last-resort second fallback with the same unconfirmed provenance and no independent digest; its short timeout makes a dead endpoint fail fast instead of hanging:
 
 ```bash
+set -e
 caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Libraries.zip \
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
@@ -399,6 +415,7 @@ caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Li
 Either way, continue identically from here:
 
 ```bash
+set -e
 cd ~/Downloads
 ditto -xk WhiskyWine-Libraries.zip .
 mkdir -p "$SUPPORT"
@@ -498,15 +515,34 @@ If that prints `MISSING` on a machine where Step 4 otherwise looked fine, the ru
 `INSTALLER_SOURCE` resolves to either a URL or an already-downloaded local `.zip` path — branch on which one it actually is, don't hand a local path straight to `curl` (it doesn't reliably fetch bare local paths the way `cp` does). If 2b already relocated the download to `~/Games/UaRO_Setup.zip`, there's nothing to fetch — skip straight to extraction. **`$INSTALLER_SOURCE` must actually be set as a shell variable before the `if` below runs** — it's resolved, not a placeholder, so set it explicitly if this is a fresh shell invocation (same re-derivation rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` — see the callout after the Parameters table):
 
 ```bash
-INSTALLER_SOURCE=~/Games/UaRO_Setup.zip   # if 2b staged it; otherwise the URL or local path the user actually gave you
-mkdir -p "$(dirname "$GAME_DIR")"   # e.g. ~/Games
-if [[ "$INSTALLER_SOURCE" == ~/Games/UaRO_Setup.zip ]]; then
-  : # already staged by 2b — nothing to do
+set -e
+INSTALLER_SOURCE="${INSTALLER_SOURCE:?Resolve the actual URL or local .zip path before continuing}"
+INSTALLER_ZIP="$HOME/Games/UaRO_Setup.zip"
+mkdir -p "$(dirname "$INSTALLER_ZIP")"
+PARTIAL_INSTALLER="$(mktemp "${INSTALLER_ZIP}.partial.XXXXXX")"
+cleanup_partial() { rm -f "$PARTIAL_INSTALLER"; }
+trap cleanup_partial EXIT
+if [[ "$INSTALLER_SOURCE" == "$INSTALLER_ZIP" ]]; then
+  [[ -f "$INSTALLER_SOURCE" && ! -L "$INSTALLER_SOURCE" ]] || {
+    echo "BLOCKED: the staged installer is missing or is a symlink" >&2
+    exit 1
+  }
+  cp "$INSTALLER_SOURCE" "$PARTIAL_INSTALLER"
 elif [[ "$INSTALLER_SOURCE" =~ ^https?:// ]]; then
-  caffeinate -i curl -fL --progress-bar -o ~/Games/UaRO_Setup.zip "$INSTALLER_SOURCE"
+  caffeinate -i curl -fL --progress-bar -o "$PARTIAL_INSTALLER" "$INSTALLER_SOURCE"
 else
-  cp "$INSTALLER_SOURCE" ~/Games/UaRO_Setup.zip
+  [[ -f "$INSTALLER_SOURCE" && ! -L "$INSTALLER_SOURCE" ]] || {
+    echo "BLOCKED: the supplied installer path is missing or is a symlink" >&2
+    exit 1
+  }
+  cp "$INSTALLER_SOURCE" "$PARTIAL_INSTALLER"
 fi
+test -s "$PARTIAL_INSTALLER" || {
+  echo "BLOCKED: installer staging produced no bytes" >&2
+  exit 1
+}
+mv -f "$PARTIAL_INSTALLER" "$INSTALLER_ZIP"
+trap - EXIT
 mkdir -p ~/Games/UaRO_Setup
 ditto -xk ~/Games/UaRO_Setup.zip ~/Games/UaRO_Setup   # NEVER unzip — macOS's bundled Info-Zip
                                                        # silently no-ops on ZIP64 archives over 4GB
@@ -573,64 +609,346 @@ If it landed somewhere else, **adopt that real path as `GAME_DIR` for every step
 
 ## Step 8 — Patch setup.exe (FCOM byte-patches, two sites)
 
-**`setup.exe` here is a different file from `UaRO_Setup.exe`, the installer Step 6/7 just downloaded and ran — despite the near-identical name.** `UaRO_Setup.exe` is the Inno Setup installer, already done with its job by this point. `setup.exe` is RO OpenSetup, the game's own graphics-config tool, sitting inside `$GAME_DIR` (installed alongside the game itself, not related to Step 6/7's installer). This step patches that second file, not the first.
+setup.exe here is a different file from UaRO_Setup.exe, the installer Step 6/7 just downloaded and ran, despite the near-identical name. UaRO_Setup.exe is the Inno Setup installer, already done with its job by this point. setup.exe is RO OpenSetup, the game's own graphics-config tool, sitting inside GAME_DIR (installed alongside the game itself, not related to Step 6/7's installer). This step inspects that second file, not the first.
 
-Rosetta can't translate certain alternate x87 FCOM instruction encodings; running them crashes `setup.exe` with "Unhandled illegal instruction." Both sites are context-checked before writing, so a build that doesn't need a given site skips it safely.
+Rosetta cannot translate certain alternate x87 FCOM instruction encodings; running them crashes setup.exe with an illegal-instruction error. Read-only classification is now provided by the deterministic executor. This section keeps the policy and interpretation; the byte-reading algorithm lives in `scripts/uaro.py`.
 
-```bash
-SETUP="$GAME_DIR/setup.exe"
-if [[ -e "$SETUP.orig-backup" ]]; then
-  [[ "$(stat -f%z "$SETUP")" == "$(stat -f%z "$SETUP.orig-backup")" ]] \
-    || { echo "Existing setup.exe backup has a different size — stop and inspect it before patching"; exit 1; }
-  echo "Preserving existing original backup: $SETUP.orig-backup"
-else
-  cp "$SETUP" "$SETUP.orig-backup"
-  echo "Created original backup: $SETUP.orig-backup"
-fi
-chmod u+w "$SETUP"
-```
+Known states:
 
-**`$SETUP` is reused bare in both later code blocks below (the `dd`/Python patch and the mandatory byte-diff verification) — re-derive it (`SETUP="$GAME_DIR/setup.exe"`) at the top of each, the same standing rule as `$BOTTLE_NAME`/`$GAME_DIR`/`$WHISKY` (see the callout after the Parameters table).** Since it's a deterministic one-liner from `$GAME_DIR`, not a decision that needs remembering, always re-deriving is a harmless no-op even when it happens to already be correct.
+- Site A at 0x2C0CD: unpatched `dc`; patched `d8`.
+- Site B at 0x21E39: unpatched `dcd8dfe0`; patched `ddd8b440`.
 
-**Site A — 1 byte @ `0x2C0CD`, `dc`→`d8`.** Context window is 4 bytes *before* the patched byte, the byte itself, then 3 bytes after (`dc442410 dc d0dfe0`, patched byte in the middle) — reading 8 bytes forward *starting at* the offset will not match and looks like a false "uncatalogued build."
+The expected pair is classified only after both sites are read. `UNKNOWN`, `MIXED`, and `TRUNCATED` are fail-closed states. A read-only check never creates a backup and never writes `setup.exe`.
 
-**Site B — 4 bytes @ `0x21E39`, `dcd8dfe0`→`ddd8b440`.** Context here *does* start exactly at the patch offset — the two sites use different alignment conventions, don't unify them.
+### Shared deterministic read-only executor routing
 
-Preferred method — plain `dd` (fine for normal unrestricted shells):
+The read-only FCOM and structural-inspection blocks below must be run in the same shell invocation as this helper block so the functions are available. Set `AURO_REPO_ROOT` to this checkout when the current working directory is elsewhere; when it is unset, the current directory is used only if Git can resolve it to the expected repository. The helper validates the Git root, the expected `origin`, and the readable executor file. A missing or different origin is `BLOCKED`; never guess another checkout. No private absolute path is embedded.
 
 ```bash
-SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
-xxd -s $((0x2C0C9)) -l 8 "$SETUP"     # confirm context reads dc442410dcd0dfe0 before patching
-printf '\xd8' | dd of="$SETUP" bs=1 seek=$((0x2C0CD)) count=1 conv=notrunc
+resolve_uaro_executor() {
+  local repo_hint="${AURO_REPO_ROOT:-$PWD}"
+  [[ -n "$repo_hint" ]] || {
+    echo "BLOCKED: AURO_REPO_ROOT/PWD is empty; cannot resolve the deterministic executor" >&2
+    return 1
+  }
+  local repo_root
+  repo_root="$(git -C "$repo_hint" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "BLOCKED: cannot resolve a Git repository root from AURO_REPO_ROOT/PWD" >&2
+    return 1
+  }
+  local origin_url
+  origin_url="$(git -C "$repo_root" config --get remote.origin.url 2>/dev/null || true)"
+  case "$origin_url" in
+    https://github.com/jirukouya/auRO-whisky-macOS-setup|https://github.com/jirukouya/auRO-whisky-macOS-setup.git|git@github.com:jirukouya/auRO-whisky-macOS-setup.git|ssh://git@github.com/jirukouya/auRO-whisky-macOS-setup.git)
+      ;;
+    *)
+      echo "BLOCKED: Git repository origin is not the expected auRO-whisky-macOS-setup checkout" >&2
+      return 1
+      ;;
+  esac
+  local executor="$repo_root/scripts/uaro.py"
+  [[ -f "$executor" && -r "$executor" ]] || {
+    echo "BLOCKED: deterministic executor is missing or unreadable: $executor" >&2
+    return 1
+  }
+  printf '%s\n' "$executor"
+}
 
-xxd -s $((0x21E39)) -l 4 "$SETUP"     # confirm context reads dcd8dfe0 before patching
-printf '\xdd\xd8\xb4\x40' | dd of="$SETUP" bs=1 seek=$((0x21E39)) count=4 conv=notrunc
-```
+validate_uaro_json() {
+  local payload="$1"
+  local expected_operation="$2"
+  local expected_path_key="$3"
+  local expected_path="$4"
+  local expected_capability="${5:-}"
+  local validation_mode="${6:-readonly}"
+  python3 - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" "$expected_capability" "$validation_mode" <<'PYEOF'
+import json
+import os
+import sys
 
-**If `dd` writes are blocked** (some sandboxed/agent execution environments deny direct binary writes independent of file permissions), use this Python fallback — verified to produce byte-identical results. **`<GAME_DIR>` here is a placeholder, not a live shell variable — substitute the real resolved path before running this.** The `cat > ... <<'PYEOF'` wrapper below is what actually creates and runs the file — same pattern as Step 10's Python patch script, not just an illustrative snippet:
-
-```bash
-cat > /tmp/patch_setup_exe.py <<'PYEOF'
-path = "<GAME_DIR>/setup.exe"
-with open(path, "r+b") as f:
-    f.seek(0x2C0CD); assert f.read(1) == b'\xdc'; f.seek(0x2C0CD); f.write(b'\xd8')
-    f.seek(0x21E39); assert f.read(4) == bytes.fromhex("dcd8dfe0"); f.seek(0x21E39); f.write(bytes.fromhex("ddd8b440"))
-print("done")
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed deterministic executor JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: deterministic executor JSON is not an object", file=sys.stderr)
+    raise SystemExit(1)
+expected_operation = sys.argv[2]
+expected_path_key = sys.argv[3]
+expected_path = sys.argv[4]
+expected_capability = sys.argv[5]
+validation_mode = sys.argv[6]
+missing = [key for key in ("operation", "capability", "result", "mutation") if key not in payload]
+if missing:
+    print(f"BLOCKED: deterministic executor JSON is incomplete: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["operation"] != expected_operation:
+    print("BLOCKED: deterministic executor returned an unexpected operation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["result"] != "success":
+    print("BLOCKED: deterministic executor did not report success", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "readonly" and payload["mutation"] is not False:
+    print("BLOCKED: read-only executor result did not prove mutation=false", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "apply" and not isinstance(payload["mutation"], bool):
+    print("BLOCKED: mutation executor result did not provide a boolean mutation field", file=sys.stderr)
+    raise SystemExit(1)
+if expected_capability and payload.get("capability") != expected_capability:
+    print("BLOCKED: deterministic executor returned an unexpected capability", file=sys.stderr)
+    raise SystemExit(1)
+if expected_path_key:
+    reported_path = payload.get(expected_path_key)
+    if not isinstance(reported_path, str):
+        print("BLOCKED: deterministic executor result omitted the expected target path", file=sys.stderr)
+        raise SystemExit(1)
+    reported_real = os.path.realpath(os.path.abspath(reported_path))
+    expected_real = os.path.realpath(os.path.abspath(expected_path))
+    if reported_real != expected_real:
+        print("BLOCKED: deterministic executor result names a different target", file=sys.stderr)
+        raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
 PYEOF
-python3 /tmp/patch_setup_exe.py
+}
 ```
 
-**MANDATORY verification — byte-diff against the backup, don't just trust the write succeeded:**
+### Read-only FCOM classification
+
+Run the helper block and this block together. `UNPATCHED` is valid evidence that a later, separately authorized mutation could be considered; it is not mutation authority. `PATCHED` means no mutation is needed. Every other state blocks.
 
 ```bash
-SETUP="$GAME_DIR/setup.exe"   # re-derive -- see the note after Step 8's opening block
-cmp -l "$SETUP.orig-backup" "$SETUP" | awk '{printf "offset(dec)=%d 0x%X\n", $1-1, $1-1}'
-# Expect exactly: 0x2C0CD, and within 0x21E39-0x21E3C (3 of the 4 bytes actually differ — the
-# 2nd byte of Site B, 0xd8, is unchanged between pre/post). Nothing else should be listed.
-ls -la "$SETUP" "$SETUP.orig-backup"   # sizes must match exactly
+SETUP="${GAME_DIR:?Resolve GAME_DIR to the installed game directory before running this block}/setup.exe"
+AURO_EXECUTOR="$(resolve_uaro_executor)" || { echo "BLOCKED: deterministic executor path is unavailable" >&2; exit 1; }
+
+if ! CHECK_JSON="$(python3 "$AURO_EXECUTOR" fcom check "$SETUP")"; then
+  echo "BLOCKED: deterministic FCOM check failed" >&2
+  exit 1
+fi
+if ! CHECK_JSON="$(validate_uaro_json "$CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+  exit 1
+fi
+if ! CHECK_STATE="$(python3 - "$CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed FCOM evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+required = ("state", "site_a", "site_b", "backup_created", "verification")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete FCOM evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] not in ("UNPATCHED", "PATCHED", "MIXED", "UNKNOWN", "TRUNCATED"):
+    print("BLOCKED: unexpected FCOM state", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "UNPATCHED" and (payload["site_a"] != "unpatched" or payload["site_b"] != "unpatched"):
+    print("BLOCKED: FCOM check state and site evidence disagree", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "PATCHED" and (payload["site_a"] != "patched" or payload["site_b"] != "patched"):
+    print("BLOCKED: FCOM check state and site evidence disagree", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: read-only FCOM evidence contains mutation or backup claims", file=sys.stderr)
+    raise SystemExit(1)
+print(payload["state"])
+PYEOF
+)"; then
+  exit 1
+fi
+
+case "$CHECK_STATE" in
+  UNPATCHED)
+    echo "TARGET FCOM evidence: UNPATCHED; mutation authority remains denied"
+    ;;
+  PATCHED)
+    echo "TARGET FCOM evidence: PATCHED; no mutation needed"
+    ;;
+  MIXED|UNKNOWN|TRUNCATED)
+    echo "BLOCKED: FCOM state=$CHECK_STATE; no write or backup is authorized" >&2
+    exit 1
+    ;;
+  *)
+    echo "BLOCKED: unexpected FCOM state=$CHECK_STATE" >&2
+    exit 1
+    ;;
+esac
 ```
 
-**If setup.exe crashes at a different `0042xxxx` address:** subtract the PE ImageBase `0x400000` to get the file offset. `0x0042C0CD` → Site A, `0x00421E39` → Site B. Any other address is an uncatalogued third site from a newer installer build — dump 16 bytes around it (`xxd -s $((0xOFFSET - 8)) -l 16 setup.exe`) and treat it as a new finding, don't assume the two offsets above are permanent across future uaRO releases.
+If the executor is missing, cannot be resolved, exits nonzero, returns malformed or incomplete JSON, or names a different target, stop. Do not fall back to a shell byte classifier. The executor's structured result is evidence only; it does not prove process execution, launcher behavior, patch freshness, or user authority.
+
+### Deterministic FCOM mutation
+
+For a fresh or adopted install, run this block after the read-only check above in the same shell invocation and only after the existing Step 8 approval/authority decision for that install route. The initial `UNPATCHED` result is evidence that mutation may be needed; it is not mutation authority. This existing Step 8 authority gate permits the deterministic executor to perform the one active mutation transaction. `fcom apply` owns backup creation, target identity checks, exact writes, and verification. If it fails, block; do not fall back to an inline shell patch or the later Settings launcher.
+
+```bash
+if [[ "$CHECK_STATE" == "PATCHED" ]]; then
+  echo "TARGET FCOM evidence: PATCHED; no mutation needed"
+elif [[ "$CHECK_STATE" == "UNPATCHED" ]]; then
+  if ! APPLY_JSON="$(python3 "$AURO_EXECUTOR" fcom apply "$SETUP")"; then
+    echo "BLOCKED: deterministic FCOM apply failed" >&2
+    exit 1
+  fi
+  if ! APPLY_JSON="$(validate_uaro_json "$APPLY_JSON" "fcom-apply" "target" "$SETUP" "REVERSIBLE_MUTATION" "apply")"; then
+    exit 1
+  fi
+  if ! APPLY_STATE="$(python3 - "$APPLY_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed FCOM apply evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+required = (
+    "operation", "capability", "state", "pre_state", "post_state",
+    "site_a", "site_b", "backup_created", "mutation", "verification", "reason",
+)
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete FCOM apply evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["post_state"] != "PATCHED" or payload["state"] != payload["pre_state"]:
+    print("BLOCKED: FCOM apply did not prove a coherent PATCHED result", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: FCOM apply reported an invalid pre-state", file=sys.stderr)
+    raise SystemExit(1)
+if payload["verification"] != "passed":
+    print("BLOCKED: FCOM apply verification did not pass", file=sys.stderr)
+    raise SystemExit(1)
+if payload["reason"] not in ("patched and verified", "already patched; no-op"):
+    print("BLOCKED: FCOM apply returned an unrecognized success reason", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "UNPATCHED" and payload["mutation"] is not True:
+    print("BLOCKED: FCOM apply reported UNPATCHED without a completed mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "PATCHED" and (payload["mutation"] is not False or payload["backup_created"] is not False):
+    print("BLOCKED: FCOM no-op result claimed mutation or backup creation", file=sys.stderr)
+    raise SystemExit(1)
+print("PATCHED")
+PYEOF
+)"; then
+    exit 1
+  fi
+
+  if ! POST_CHECK_JSON="$(python3 "$AURO_EXECUTOR" fcom check "$SETUP")"; then
+    echo "BLOCKED: independent post-apply FCOM check failed" >&2
+    exit 1
+  fi
+  if ! POST_CHECK_JSON="$(validate_uaro_json "$POST_CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+    exit 1
+  fi
+  if ! python3 - "$POST_CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed post-apply FCOM evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+required = ("state", "site_a", "site_b", "backup_created", "verification", "mutation", "capability")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete post-apply FCOM evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] != "PATCHED" or payload["site_a"] != "patched" or payload["site_b"] != "patched":
+    print("BLOCKED: independent post-apply FCOM check did not prove both sites PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload["mutation"] is not False or payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: independent post-apply FCOM check was not read-only", file=sys.stderr)
+    raise SystemExit(1)
+print("PATCHED")
+PYEOF
+  then
+    exit 1
+  fi
+  echo "FCOM apply succeeded and independent PATCHED check passed"
+else
+  echo "BLOCKED: FCOM state=$CHECK_STATE; no mutation is authorized" >&2
+  exit 1
+fi
+```
+
+A failed deterministic apply is a blocked transaction. Rollback is performed by reverting the Stage 2.1 integration commit, never by executing a legacy mutation fallback.
+
+### Explicit structural target inspection
+
+Use this route for target evidence only. It checks the explicitly supplied game and application paths and reports `EXECUTION=UNCONFIRMED` and `BEHAVIOR=UNCONFIRMED` even when all structural facts are present. `UaRO Patcher.app` and `UaRO Settings.app` are required structural targets; `UaRO Game.app` remains optional.
+
+Run the helper block and this block together. `APPS_DIR` defaults to `/Applications` and may be set to another explicitly inspected application directory for a controlled verification.
+
+```bash
+GAME_DIR="${GAME_DIR:?Resolve GAME_DIR to the installed game directory before running this block}"
+APPS_DIR="${APPS_DIR:-/Applications}"
+AURO_EXECUTOR="$(resolve_uaro_executor)" || { echo "BLOCKED: deterministic executor path is unavailable" >&2; exit 1; }
+
+if ! INSPECT_JSON="$(python3 "$AURO_EXECUTOR" inspect --game-dir "$GAME_DIR" --apps-dir "$APPS_DIR")"; then
+  echo "BLOCKED: deterministic structural inspection failed" >&2
+  exit 1
+fi
+if ! INSPECT_JSON="$(validate_uaro_json "$INSPECT_JSON" "inspect" "game_dir" "$GAME_DIR" "READ" "readonly")"; then
+  exit 1
+fi
+python3 - "$INSPECT_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed structural evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("evidence_scope") != "explicit structural facts only":
+    print("BLOCKED: structural inspection scope is not explicit", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("execution") != "UNCONFIRMED":
+    print("BLOCKED: structural inspection cannot prove execution", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("mutation") is not False or payload.get("deletion_authority") is not False:
+    print("BLOCKED: structural inspection returned an authority claim", file=sys.stderr)
+    raise SystemExit(1)
+evidence = payload.get("evidence")
+if not isinstance(evidence, dict):
+    print("BLOCKED: structural inspection omitted evidence", file=sys.stderr)
+    raise SystemExit(1)
+for key in ("game_dir_exists", "uaro_exe_exists", "setup_exe_exists", "fcom", "savedata"):
+    if key not in evidence:
+        print(f"BLOCKED: structural inspection omitted {key}", file=sys.stderr)
+        raise SystemExit(1)
+if not all(evidence[key] is True for key in ("game_dir_exists", "uaro_exe_exists", "setup_exe_exists")):
+    print("BLOCKED: required game target structure is missing", file=sys.stderr)
+    raise SystemExit(1)
+fcom = evidence["fcom"]
+if not isinstance(fcom, dict) or fcom.get("result") != "success" or fcom.get("state") not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: FCOM structural evidence is unavailable or fail-closed", file=sys.stderr)
+    raise SystemExit(1)
+apps = payload.get("apps")
+if not isinstance(apps, dict):
+    print("BLOCKED: application structural evidence is missing", file=sys.stderr)
+    raise SystemExit(1)
+for name in ("UaRO Patcher.app", "UaRO Settings.app"):
+    record = apps.get(name)
+    if not isinstance(record, dict) or record.get("required") is not True or record.get("exists") is not True:
+        print(f"BLOCKED: required launcher structure is missing: {name}", file=sys.stderr)
+        raise SystemExit(1)
+optional_game = apps.get("UaRO Game.app")
+if not isinstance(optional_game, dict) or optional_game.get("required") is not False:
+    print("BLOCKED: optional Game.app was not represented as optional", file=sys.stderr)
+    raise SystemExit(1)
+print("TARGET=PASS (explicit structural evidence only)")
+print("EXECUTION=UNCONFIRMED; BEHAVIOR=UNCONFIRMED")
+PYEOF
+```
+
+A missing or unreadable target, missing required launcher structure, unavailable FCOM evidence, malformed result, nonzero executor exit, or unresolved invocation path is `BLOCKED`. Structural evidence does not prove Whisky/Wine runtime use, process arguments, launcher behavior, login stability, patch freshness, overall install health, or user authority. Any later mutation, backup, uninstall, or deletion route remains separately gated and is not part of this read-only integration.
+
+If setup.exe crashes at a different 0042xxxx address, subtract the PE ImageBase 0x400000 to get the file offset. 0x0042C0CD maps to Site A and 0x00421E39 maps to Site B. Any other address is an uncatalogued third site from a newer installer build; dump the surrounding bytes and stop rather than changing these approved historical values.
 
 ## Phase C — Client readiness (Steps 9–9b–10)
 
@@ -976,17 +1294,140 @@ EOF
 
 `WINEDLLOVERRIDES` **must append**, never replace — `whisky shellenv` already exports DXVK overrides (`dxgi,d3d9,d3d10core,d3d11=n,b`); overwriting the variable disables DXVK and tanks FPS. `WINE_CPU_TOPOLOGY=4:0,1,2,3` stabilizes Gepard Shield's anti-debug CPU-detection routines (fixes crashes ~3s after login and `Gepard::T Code: 3::110::12` disconnects).
 
-`UaRO Settings.app/Contents/MacOS/uaro-settings` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, plus an idempotent re-patch of both FCOM sites (checks against the *post*-patch bytes so it skips cleanly if already done) before exec'ing `setup.exe`:
+`UaRO Settings.app/Contents/MacOS/uaro-settings` uses the same substitution rule and quoted-heredoc requirement as `uaro-patcher` above. Its only active implementation is the bundle-local route below; the former inline byte-edit launcher has been retired so a Finder launch cannot select a second FCOM mutation HOW.
+
+### Stage 2.2B — bundle-local Settings route
+
+The bundle-local Settings launcher below is the sole active Step 11 Settings route. It keeps the launcher decision and FCOM mutation evidence in the bundle-local runtime:
+
+```text
+Finder / LaunchServices
+        -> UaRO Settings.app
+        -> recorded absolute Python
+        -> bundle-local settings_runtime_verify.py
+        -> runtime PASS
+        -> bundled uaro.py fcom apply "$SETUP"
+        -> validate apply evidence
+        -> independent bundled fcom check "$SETUP"
+        -> require PATCHED
+        -> launch setup.exe
+```
+
+Build the runtime after `UaRO Settings.app` exists and while the canonical
+sources are committed and clean. The recorded interpreter path is embedded in
+the launcher so a later Finder launch never searches `PATH`:
+
+```bash
+AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before building the Settings runtime}"
+PYTHON_RUNTIME="$(python3 -c 'import os,sys; print(os.path.abspath(sys.executable))')"
+RUNTIME_DIR="/Applications/UaRO Settings.app/Contents/Resources/uaro-runtime"
+python3 "$AURO_REPO_ROOT/scripts/build_settings_runtime.py" build \
+  --repo-root "$AURO_REPO_ROOT" \
+  --destination "$RUNTIME_DIR" \
+  --python "$PYTHON_RUNTIME"
+```
+
+Write the following as the deterministic implementation for
+`/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings`. Replace every
+angle-bracket placeholder before writing the file; the quoted heredoc keeps the
+runtime variables literal for the later Finder launch.
 
 ```bash
 cat > "/Applications/UaRO Settings.app/Contents/MacOS/uaro-settings" <<'EOF'
 #!/bin/zsh
 set -e
+BOTTLE_NAME="<BOTTLE_NAME>"
+GAME_DIR="<GAME_DIR>"
+PYTHON_RUNTIME="<RECORDED_PYTHON>"
+RUNTIME_DIR="<RUNTIME_DIR>"
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
-eval "$("$WHISKY" shellenv <BOTTLE_NAME>)"
-cd "<GAME_DIR>"
+eval "$("$WHISKY" shellenv "$BOTTLE_NAME")"
+cd "$GAME_DIR"
 
-# Same stale-process cleanup as uaro-patcher -- see the comment there for why.
+[[ -x "$PYTHON_RUNTIME" ]] || { echo "BLOCKED: recorded Python is missing or not executable" >&2; exit 1; }
+[[ -f "$RUNTIME_DIR/MANIFEST.json" && -f "$RUNTIME_DIR/uaro.py" && -f "$RUNTIME_DIR/settings_runtime_verify.py" ]] || {
+  echo "BLOCKED: bundled Settings runtime is incomplete" >&2
+  exit 1
+}
+
+RUNTIME_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/settings_runtime_verify.py" "$RUNTIME_DIR")" || {
+  echo "BLOCKED: bundle-local Settings runtime verification failed" >&2
+  exit 1
+}
+if ! "$PYTHON_RUNTIME" - "$RUNTIME_JSON" <<'PYEOF'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed runtime verification evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("result") != "PASS":
+    print("BLOCKED: bundled Settings runtime did not PASS", file=sys.stderr)
+    raise SystemExit(1)
+for key in ("executor_verified", "verifier_verified", "python_verified"):
+    if payload.get(key) is not True:
+        print(f"BLOCKED: runtime verification omitted {key}", file=sys.stderr)
+        raise SystemExit(1)
+PYEOF
+then
+  exit 1
+fi
+
+SETUP="$GAME_DIR/setup.exe"
+[[ -f "$SETUP" ]] || { echo "BLOCKED: setup.exe is missing" >&2; exit 1; }
+
+validate_bundled_executor_json() {
+  local payload="$1"
+  local expected_operation="$2"
+  local expected_path_key="$3"
+  local expected_path="$4"
+  local expected_capability="$5"
+  local validation_mode="$6"
+  "$PYTHON_RUNTIME" - "$payload" "$expected_operation" "$expected_path_key" "$expected_path" "$expected_capability" "$validation_mode" <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed bundled executor JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: bundled executor JSON is not an object", file=sys.stderr)
+    raise SystemExit(1)
+expected_operation, expected_path_key, expected_path = sys.argv[2:5]
+expected_capability, validation_mode = sys.argv[5:7]
+required = ("operation", "capability", "result", "mutation")
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete bundled executor evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+if payload["operation"] != expected_operation or payload["result"] != "success":
+    print("BLOCKED: bundled executor returned an unexpected result", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "readonly" and payload["mutation"] is not False:
+    print("BLOCKED: independent FCOM check was not read-only", file=sys.stderr)
+    raise SystemExit(1)
+if validation_mode == "apply" and not isinstance(payload["mutation"], bool):
+    print("BLOCKED: FCOM apply evidence has no boolean mutation field", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("capability") != expected_capability:
+    print("BLOCKED: bundled executor returned an unexpected capability", file=sys.stderr)
+    raise SystemExit(1)
+reported_path = payload.get(expected_path_key)
+if not isinstance(reported_path, str):
+    print("BLOCKED: bundled executor omitted its target path", file=sys.stderr)
+    raise SystemExit(1)
+if os.path.realpath(os.path.abspath(reported_path)) != os.path.realpath(os.path.abspath(expected_path)):
+    print("BLOCKED: bundled executor named a different target", file=sys.stderr)
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
+PYEOF
+}
+
 wineserver -k >/dev/null 2>&1 || true
 pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
 pkill -f "uaRO.exe" >/dev/null 2>&1 || true
@@ -996,29 +1437,113 @@ sleep 1
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
 export WINE_CPU_TOPOLOGY=4:0,1,2,3
 
-_patch_setup_exe() {
-	local setup="$PWD/setup.exe"
-	[[ -f "$setup" ]] || return 0
-	chmod u+w "$setup" 2>/dev/null || true
-	local a_cur=$(dd if="$setup" bs=1 skip=$((0x2C0CD)) count=1 2>/dev/null | xxd -p)
-	[[ "$a_cur" == "dc" ]] && printf '\xd8' | dd of="$setup" bs=1 seek=$((0x2C0CD)) count=1 conv=notrunc 2>/dev/null
-	local b_cur=$(dd if="$setup" bs=1 skip=$((0x21E39)) count=4 2>/dev/null | xxd -p)
-	[[ "$b_cur" == "dcd8dfe0" ]] && printf '\xdd\xd8\xb4\x40' | dd of="$setup" bs=1 seek=$((0x21E39)) count=4 conv=notrunc 2>/dev/null
-	# `return 0` is load-bearing, not decoration -- same set -e trap as uaro-patcher's
-	# wait bracketing above: when Site B is ALREADY patched (the normal healthy state),
-	# the [[ ]] && list above returns 1, that becomes this function's exit status, and
-	# under `set -e` the whole script dies right here -- before the exec below ever
-	# runs. Symptom without this line: double-clicking UaRO Settings.app silently does
-	# nothing. Verified live on a real install (2026-08-01): repro
-	# `zsh -c 'set -e; f() { [[ a == b ]] && echo x; }; f; echo reached'` never prints
-	# "reached"; adding return 0 fixed the launcher immediately.
-	return 0
-}
+if ! CHECK_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom check "$SETUP")"; then
+  echo "BLOCKED: bundled pre-apply FCOM check failed" >&2
+  exit 1
+fi
+if ! CHECK_JSON="$(validate_bundled_executor_json "$CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+  exit 1
+fi
+if ! CHECK_STATE="$("$PYTHON_RUNTIME" - "$CHECK_JSON" <<'PYEOF'
+import json
+import sys
 
-_patch_setup_exe
+payload = json.loads(sys.argv[1])
+required = ("state", "site_a", "site_b", "backup_created", "verification")
+if any(key not in payload for key in required):
+    print("BLOCKED: incomplete pre-apply FCOM evidence", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] not in ("UNPATCHED", "PATCHED"):
+    print("BLOCKED: pre-apply FCOM state is not safely classifiable", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "UNPATCHED" and (payload["site_a"] != "unpatched" or payload["site_b"] != "unpatched"):
+    print("BLOCKED: pre-apply FCOM site evidence disagrees", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] == "PATCHED" and (payload["site_a"] != "patched" or payload["site_b"] != "patched"):
+    print("BLOCKED: pre-apply FCOM site evidence disagrees", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_created"] is not False or payload["verification"] != "not-run":
+    print("BLOCKED: pre-apply check claimed mutation", file=sys.stderr)
+    raise SystemExit(1)
+print(payload["state"])
+PYEOF
+)"; then
+  exit 1
+fi
+
+if [[ "$CHECK_STATE" == "UNPATCHED" ]]; then
+  if ! APPLY_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom apply "$SETUP")"; then
+    echo "BLOCKED: bundled FCOM apply failed" >&2
+    exit 1
+  fi
+  if ! APPLY_JSON="$(validate_bundled_executor_json "$APPLY_JSON" "fcom-apply" "target" "$SETUP" "REVERSIBLE_MUTATION" "apply")"; then
+    exit 1
+  fi
+  if ! "$PYTHON_RUNTIME" - "$APPLY_JSON" <<'PYEOF'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+required = ("state", "pre_state", "post_state", "site_a", "site_b", "backup_created", "mutation", "verification", "reason")
+if any(key not in payload for key in required):
+    print("BLOCKED: incomplete FCOM apply evidence", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] not in ("UNPATCHED", "PATCHED") or payload["post_state"] != "PATCHED":
+    print("BLOCKED: FCOM apply did not prove PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload["state"] != payload["pre_state"] or payload["verification"] != "passed":
+    print("BLOCKED: FCOM apply evidence is incoherent", file=sys.stderr)
+    raise SystemExit(1)
+if payload["reason"] not in ("patched and verified", "already patched; no-op"):
+    print("BLOCKED: FCOM apply returned an unrecognized success reason", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "UNPATCHED" and payload["mutation"] is not True:
+    print("BLOCKED: UNPATCHED apply did not report mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["pre_state"] == "PATCHED" and (payload["mutation"] is not False or payload["backup_created"] is not False):
+    print("BLOCKED: no-op apply claimed mutation or backup", file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+  then
+    exit 1
+  fi
+
+  if ! POST_CHECK_JSON="$("$PYTHON_RUNTIME" "$RUNTIME_DIR/uaro.py" fcom check "$SETUP")"; then
+    echo "BLOCKED: independent post-apply FCOM check failed" >&2
+    exit 1
+  fi
+  if ! POST_CHECK_JSON="$(validate_bundled_executor_json "$POST_CHECK_JSON" "fcom-check" "target" "$SETUP" "READ" "readonly")"; then
+    exit 1
+  fi
+  if ! "$PYTHON_RUNTIME" - "$POST_CHECK_JSON" <<'PYEOF'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+if payload.get("state") != "PATCHED" or payload.get("site_a") != "patched" or payload.get("site_b") != "patched":
+    print("BLOCKED: independent FCOM check did not prove PATCHED", file=sys.stderr)
+    raise SystemExit(1)
+if payload.get("mutation") is not False or payload.get("backup_created") is not False or payload.get("verification") != "not-run":
+    print("BLOCKED: independent post-apply check claimed mutation", file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+  then
+    exit 1
+  fi
+  echo "FCOM apply and independent PATCHED check passed"
+elif [[ "$CHECK_STATE" != "PATCHED" ]]; then
+  echo "BLOCKED: pre-apply FCOM state=$CHECK_STATE" >&2
+  exit 1
+fi
+
 exec wine64 "setup.exe" >/dev/null 2>&1
 EOF
 ```
+
+This route has no inline FCOM fallback. A verifier `PASS` is only
+deployment evidence; the explicit `fcom apply` result and the independent
+read-only `fcom check` must both prove the final `PATCHED` state before
+`setup.exe` is launched. Re-sign the app after installing this deterministic script.
 
 `UaRO Game.app/Contents/MacOS/uaro-game` — same substitution rule and quoted-heredoc requirement as `uaro-patcher` above, same stale-process cleanup, but skips the patcher entirely and execs `uaRO.exe` directly:
 
@@ -1129,13 +1654,20 @@ done
 "$LSREGISTER" -dump 2>/dev/null | grep -A2 "identifier:.*com.uaro"
 ```
 
-**MANDATORY signature verification — don't just trust `codesign`'s exit code, confirm the bundle actually reads back as signed:**
+**MANDATORY local signature-integrity check — confirm the bundle has a valid ad-hoc signature and make the trust boundary explicit.** This proves the bundle's current code signature is internally valid after our local edit; it does **not** establish an Apple developer identity, notarization, or upstream provenance:
 
 ```bash
 APPS=("UaRO Patcher.app" "UaRO Settings.app")   # re-derive $APPS -- see the note after the mkdir loop above
 [[ -d "/Applications/UaRO Game.app" ]] && APPS+=("UaRO Game.app")
 for APP in "${APPS[@]}"; do
-  codesign -dv "/Applications/$APP" 2>&1 | grep -q "not signed" && echo "FAILED: $APP still unsigned" || echo "OK: $APP signed"
+  BUNDLE="/Applications/$APP"
+  if ! codesign --verify --deep --strict "$BUNDLE" >/dev/null 2>&1; then
+    echo "FAILED: $APP local code-signature verification failed"
+  elif codesign -dv "$BUNDLE" 2>&1 | grep -q "not signed"; then
+    echo "FAILED: $APP still unsigned"
+  else
+    echo "OK: $APP local ad-hoc signature verified (signer trust/notarization unestablished)"
+  fi
 done
 ```
 
@@ -1209,12 +1741,25 @@ cmd_repair() {
         issues+=("Bottle '$BOTTLE_NAME' missing -- recreate it via Step 5")
     fi
 
-    local any=0
+    local required=0
     local exe_name
     for APP in "UaRO Patcher.app" "UaRO Settings.app" "UaRO Game.app"; do
+        case "$APP" in
+            "UaRO Patcher.app"|"UaRO Settings.app") required=1 ;;
+            "UaRO Game.app") required=0 ;;
+        esac
+
         local bundle="/Applications/$APP"
-        [[ -d "$bundle" ]] || { echo "-- $APP -- [--] not installed, skipping"; continue; }
-        any=1
+        if [[ ! -d "$bundle" ]]; then
+            if [[ $required -eq 1 ]]; then
+                echo "[WARN] Required launcher missing: $APP"
+                problems=$((problems + 1))
+                issues+=("$APP: required launcher is missing -- rebuild via Step 11")
+            else
+                echo "-- $APP -- [--] optional launcher not installed, skipping"
+            fi
+            continue
+        fi
         echo "-- $APP --"
 
         local plist="$bundle/Contents/Info.plist"
@@ -1263,13 +1808,20 @@ cmd_repair() {
             issues+=("$APP: Info.plist invalid -- rebuild via Step 11")
         fi
 
-        codesign --force --deep --sign - "$bundle" >/dev/null 2>&1 || true
-        if codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
+        if ! codesign --force --deep --sign - "$bundle" >/dev/null 2>&1; then
+            echo "[WARN] Re-sign command failed"
+            problems=$((problems + 1))
+            issues+=("$APP: re-sign command failed -- not expected to fail, worth a closer look rather than a routine Step 11 rebuild")
+        elif ! codesign --verify --deep --strict "$bundle" >/dev/null 2>&1; then
+            echo "[WARN] Local code-signature verification failed after re-sign"
+            problems=$((problems + 1))
+            issues+=("$APP: local code-signature verification failed after re-sign -- signer trust/notarization remains unestablished")
+        elif codesign -dv "$bundle" 2>&1 | grep -q "not signed"; then
             echo "[WARN] Still unsigned after a re-sign attempt"
             problems=$((problems + 1))
             issues+=("$APP: still unsigned after a re-sign attempt -- not expected to fail, worth a closer look rather than a routine Step 11 rebuild")
         else
-            echo "[OK]   Signature valid (re-signed)"
+            echo "[OK]   Local ad-hoc signature verified (signer trust/notarization unestablished)"
         fi
 
         "$LSREGISTER" -f "$bundle" >/dev/null 2>&1 || true
@@ -1284,10 +1836,7 @@ cmd_repair() {
     done
 
     echo "----------------------------------"
-    if [[ $any -eq 0 ]]; then
-        echo "No launcher apps found in /Applications -- nothing to check."
-        exit 0
-    fi
+    # Required launcher absence is accumulated above; the final problems decision is authoritative.
 
     if [[ $problems -eq 0 ]]; then
         echo "All checks passed."
@@ -1367,6 +1916,18 @@ Do not call the installation complete until all three gates below pass for the s
 
 If only the target files pass, report `UNCONFIRMED`; a running process without readable runtime evidence is also `UNCONFIRMED`. If a gate cannot be tested because the user has not clicked through a GUI or logged in, stop at that gate instead of inferring success from the earlier steps.
 
+### Execution-evidence procedure (F-03)
+
+Keep the three gates separate. Record two different claims:
+
+- **What the launcher says:** the literal bottle, game directory, runtime, WINEPREFIX, DLL overrides, and shell environment written into the launcher or manifest.
+- **What actually executed:** independent readback of the resolved Whisky CLI, the runtime executable, WINEPREFIX, relevant environment, and (only when already safely observable) the live process executable and arguments.
+
+Static/readback evidence may inspect the bottle literal, game directory, unresolved placeholders, Whisky CLI resolution, DLL overrides, shellenv, WINEPREFIX, the runtime executable, and wine64 --version. Do not launch a process merely to obtain evidence. If live execution cannot be independently proven, record EXECUTION = UNCONFIRMED.
+
+Target = PASS does not imply Execution = PASS. Behavior = PASS does not imply Execution = PASS; a behavior claim cannot fill an execution-evidence gap.
+
+
 1. Open `UaRO Settings.app`. Confirm it runs the FCOM re-patch without error, then opens "RO OpenSetup" with no crash. In its Resolution dropdown, pick the closest same-aspect-ratio entry to what the user actually wants (there is no guarantee the exact requested pixel value is offered). Click **Apply**, then **OK**.
 2. Confirm the round-trip: `grep -E "WIDTH|HEIGHT|OLD_WIDTH|OLD_HEIGHT" "$GAME_DIR/savedata/OptionInfo.lua"` should now show the GUI's chosen values in `WIDTH`/`HEIGHT` and the previous values preserved in `OLD_WIDTH`/`OLD_HEIGHT`.
 3. Open `UaRO Patcher.app`. Confirm the patcher window actually starts downloading/checking patches (progress bar moving, status line advancing past "Getting patch_main.txt...") rather than sitting stuck — if it's stuck, Step 9 (Gecko) did not actually take effect; redo it.
@@ -1429,15 +1990,108 @@ Would you like to install AzzyAI now? **Yes / No**
 > BOTTLE_NAME="uaro"                       # the real name for this machine, not the default verbatim
 > ```
 
-**Non-regenerable: `$GAME_DIR/savedata/`** (save data, character settings). Always back it up before removing anything, regardless of which level below is chosen. Use a new local backup directory outside the game folder so the backup survives the uninstall:
+**Non-regenerable: GAME_DIR/savedata/** (save data, character settings). Every deletion level must pass the deterministic external-backup transaction immediately before deletion. The backup destination must be outside GAME_DIR, not merely outside GAME_DIR/savedata.
+
+**Stage 2.3 — deterministic savedata backup integration.** The source policy distinguishes a missing path from an existing empty directory. The bundled uaro.py backup savedata executor owns source classification, destination boundaries, copy status, and independent tree comparison. This shell block only resolves the explicit runtime and destination, validates structured evidence, and grants the deletion gate after the executor proves success.
 
 ```bash
-mkdir -p "$HOME/Games/uaRO-savedata-backups"
-BACKUP_DIR="$HOME/Games/uaRO-savedata-backups/$(date +%Y%m%d-%H%M%S)"
-mkdir "$BACKUP_DIR"
-cp -R "$GAME_DIR/savedata" "$BACKUP_DIR/"
-echo "Savedata backup created at $BACKUP_DIR/savedata"
+set -e
+GAME_DIR="${GAME_DIR:?Resolve the real game directory before continuing}"
+AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before starting the backup transaction}"
+PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
+[[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
+  echo "BLOCKED: an absolute executable Python runtime is required" >&2
+  exit 1
+}
+AURO_EXECUTOR="$AURO_REPO_ROOT/scripts/uaro.py"
+[[ -f "$AURO_EXECUTOR" ]] || {
+  echo "BLOCKED: deterministic savedata executor is missing" >&2
+  exit 1
+}
+SOURCE="$GAME_DIR/savedata"
+BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Games/uaRO-savedata-backups}"
+
+if [[ -n "${BACKUP_DIR:-}" ]]; then
+  case "$BACKUP_DIR" in
+    /*) ;;
+    *) BACKUP_DIR="$BACKUP_ROOT/$BACKUP_DIR" ;;
+  esac
+else
+  BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$"
+  while [[ -e "$BACKUP_DIR" ]]; do
+    BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
+  done
+fi
+if [[ -e "$BACKUP_DIR" ]]; then
+  echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR" >&2
+  exit 1
+fi
+BACKUP_TARGET="$BACKUP_DIR/savedata"
+
+if ! BACKUP_JSON="$("$PYTHON_RUNTIME" "$AURO_EXECUTOR" backup savedata \
+  --game-dir "$GAME_DIR" \
+  --destination "$BACKUP_TARGET")"; then
+  echo "BLOCKED: deterministic savedata backup executor failed" >&2
+  exit 1
+fi
+if ! "$PYTHON_RUNTIME" - "$BACKUP_JSON" "$GAME_DIR" "$SOURCE" "$BACKUP_TARGET" <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"BLOCKED: malformed savedata backup evidence: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    print("BLOCKED: savedata backup evidence is not an object", file=sys.stderr)
+    raise SystemExit(1)
+required = (
+    "operation", "capability", "game_dir", "source", "destination", "source_state",
+    "copy", "comparison", "backup_verified", "deletion_authority", "mutation", "result",
+)
+missing = [key for key in required if key not in payload]
+if missing:
+    print(f"BLOCKED: incomplete savedata backup evidence: missing {missing}", file=sys.stderr)
+    raise SystemExit(1)
+expected_game, expected_source, expected_destination = sys.argv[2:5]
+for key, expected in (("game_dir", expected_game), ("source", expected_source), ("destination", expected_destination)):
+    reported = payload.get(key)
+    if not isinstance(reported, str) or os.path.realpath(os.path.abspath(reported)) != os.path.realpath(os.path.abspath(expected)):
+        print(f"BLOCKED: savedata backup evidence named a different {key}", file=sys.stderr)
+        raise SystemExit(1)
+if payload["operation"] != "backup-savedata" or payload["capability"] != "REVERSIBLE_MUTATION":
+    print("BLOCKED: savedata backup executor returned an unexpected operation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["source_state"] not in ("empty", "populated"):
+    print("BLOCKED: savedata source policy rejected the backup", file=sys.stderr)
+    raise SystemExit(1)
+copy_info = payload["copy"]
+comparison = payload["comparison"]
+if not isinstance(copy_info, dict) or copy_info.get("status") != "succeeded" or copy_info.get("success") is not True:
+    print("BLOCKED: savedata copy evidence is not successful", file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(comparison, dict) or comparison.get("status") != "equal":
+    print("BLOCKED: savedata source/destination comparison did not pass", file=sys.stderr)
+    raise SystemExit(1)
+if payload["backup_verified"] is not True or payload["mutation"] is not True or payload["result"] != "success":
+    print("BLOCKED: savedata backup did not prove a verified mutation", file=sys.stderr)
+    raise SystemExit(1)
+if payload["deletion_authority"] is not False:
+    print("BLOCKED: executor cannot grant deletion authority", file=sys.stderr)
+    raise SystemExit(1)
+print(json.dumps(payload, sort_keys=True))
+PYEOF
+then
+  exit 1
+fi
+
+SAVEDATA_BACKUP_VERIFIED=1
+echo "Savedata backup independently verified at $BACKUP_TARGET"
 ```
+
+SAVEDATA_BACKUP_VERIFIED=1 is set only after the deterministic executor reports a successful copy and an equal source/destination comparison. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 
@@ -1456,6 +2110,10 @@ command -v trash >/dev/null || { echo "The 'trash' command is required for recov
 
 ```bash
 # --- Level 1: game only ---
+if [[ "${SAVEDATA_BACKUP_VERIFIED:-0}" != 1 ]]; then
+  echo "Verified savedata backup is required in this same shell before deletion"
+  exit 1
+fi
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 for TARGET in \
@@ -1498,7 +2156,7 @@ softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs
 # and let them run it themselves if they're certain.
 ```
 
-**If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky's own distribution channels are permanently dead upstream — the Homebrew cask is disabled and the WhiskyWine/GPTK download endpoint 404s (see the "Why this exists" background). Re-installing later will **not** work by just re-running Step 3/4 against the live internet; it depends on the archived copy already saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and is reachable before letting the user tear down their only working copy.
+**If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky is unmaintained upstream and its Homebrew cask is deprecated, while the WhiskyWine/GPTK download endpoint is unavailable (see the "Why this exists" background). Re-installing later depends on the fixed 2.3.5 release identity and the archived copy saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and passes the Whisky verifier before letting the user tear down their only working copy.
 
 ## Credits & Disclaimer
 
