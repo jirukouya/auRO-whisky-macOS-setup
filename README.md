@@ -96,9 +96,11 @@ playbook. It does not restore machine state or private account data.
 | State | Recoverable from Git | Recovery still needed |
 |---|---|---|
 | Code, contracts, tests, fixtures, and docs | Yes | Clone or restore the canonical repository |
+| Program State and Phase Envelope cache | No | Reconcile Git with the root contract and recreate the cache outside the repository |
 | Homebrew, Rosetta, Whisky, WhiskyWine, Wine Gecko | No | Reinstall or verify the machine dependencies |
 | uaRO installer and account session | No | Log in and download the installer again |
 | Bottle, game files, savedata, and AzzyAI user configuration | No | Restore from the user's own backups or reinstall |
+| Generated launcher bundles and `uaro-cli` | No | Rebuild from the playbook and verify target, execution, and behavior |
 | TCC, Keychain, administrator access, and signing environment | No | Re-authorize the new machine when macOS prompts |
 
 The repository records the required categories and verification routes; it
