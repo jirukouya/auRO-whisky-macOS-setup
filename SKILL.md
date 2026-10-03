@@ -119,8 +119,8 @@ A command denylist is only a regression heuristic. It is not complete capability
 
 
 - **Before answering any "what have we already tried/decided/fixed for this project" question — especially a comparative one, or one about a symptom that might already be a documented issue — read this repo's root `CLAUDE.md` first, then check every source it points to** (commit messages, `CHANGELOG.md`, `TROUBLESHOOTING.md`, and `git notes` — see `CLAUDE.md` for why notes need an explicit `git fetch` to even become visible). Don't answer from whichever one source happens to come to mind first; a past run of this exact skill answered a historical-comparison question from `git log` alone and missed that `CHANGELOG.md` had the closer answer. This applies to *any* agent executing this file, not just one with prior conversation context — that's the whole reason it's written here instead of only remembered.
-- **Probe, don't assume, especially about what's "dead."** The premise "the Homebrew cask is disabled" turned out to be false on one real machine tested — it installed and worked fine. Try the normal path first every time; only fall back to a workaround if the normal path genuinely fails on *this* machine, right now.
-- **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an unconditional `brew install --cask whisky` threw noisy "not permitted" errors against an already-installed app, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
+- **Probe, don't assume, especially about what's "dead."** A live package-manager entry can still be mutable and unsuitable as a v1 identity anchor. The Whisky route records the Homebrew cask as research evidence and uses the fixed upstream release path; check the actual machine state before any install or recovery action.
+- **Check the real on-disk/registered end-state before running an install or download command — don't fire it unconditionally and parse errors after the fact.** Steps 3 (Whisky.app), 4 (WhiskyWine runtime), and 9 (Wine Gecko) each learned this the hard way on real repeat/carried-over runs: an existing Whisky app is now blocked as unverified, an unconditional runtime download re-fetched something already working, and an unconditional `winetricks -q gecko` made an already-installed Gecko look like an open question rather than a settled one. Apply the same check-first pattern to any future step that installs, downloads, or provisions something.
 - **A syntax-valid file is not a working file.** `plutil -lint` only checks that a plist parses as XML — it says nothing about whether the app that reads it can decode it into the shape it expects. Decode-test configs, don't just lint them.
 - **A file existing right after you wrote it is not proof it will still be there in 30 seconds.** On a Mac with iCloud Drive "Desktop & Documents" sync enabled, files written under `~/Documents` *and* `~/Downloads` can be silently relocated into `~/Library/Mobile Documents/com~apple~CloudDocs/...` asynchronously, tens of seconds after creation — long after an immediate check would have reported "fine."
 - **After any binary patch, byte-diff against a backup.** Don't trust that a patch did only what you intended — prove it with `cmp -l`.
@@ -305,11 +305,11 @@ This exact value matches Step 6's *first* `if` branch (already staged, nothing t
 
 ## Phase A — Environment prep (Steps 1–4)
 
-Homebrew, Rosetta 2, Whisky.app, and the WhiskyWine runtime — the four things this install needs in place before there's anywhere to put a bottle or a game.
+Homebrew, Rosetta 2, the fixed Whisky.app release, and the WhiskyWine runtime — the four things this install needs in place before there's anywhere to put a bottle or a game.
 
 ## Step 1 — Homebrew
 
-**Before running this, give the user one line of why:** *"First up: Homebrew — the tool this whole setup runs through, including installing Whisky itself in a couple steps. Along the way, this will also install `git` and a small part of Xcode (just the Command Line Tools, not the full app) — that's normal plumbing this process needs, not something you need to know how to use."*
+**Before running this, give the user one line of why:** *"First up: Homebrew — the package tool this setup uses for supporting utilities. Along the way, this will also install `git` and a small part of Xcode (just the Command Line Tools, not the full app) — that's normal plumbing this process needs, not something you need to know how to use."*
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -374,7 +374,7 @@ cp -R "$WHISKY_EXTRACT/Whisky.app" /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
-Locate the CLI (brew symlink first, then inside whichever Whisky.app was found):
+Locate the CLI inside the verified Whisky.app (a pre-existing CLI was blocked above):
 
 ```bash
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
@@ -393,9 +393,10 @@ plutil -extract version.major xml1 -o - "$SUPPORT/Libraries/WhiskyWineVersion.pl
 
 If that printed both a version number and something like `wine-7.7`, the runtime's already installed and working — skip straight to Step 5, don't re-download.
 
-If either came back empty, fetch it. Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404) — never rely on Whisky's own "Install GPTK" button either, it shows a fake instant success and leaves an empty folder. The Internet Archive snapshot once documented here as the fallback is now unreliable itself — three consecutive live attempts hung/failed to connect rather than returning even an error — so **go straight to this repo's own archived copy** (byte-identical, confirmed reachable, no auth needed since this repo is public):
+If either came back empty, fetch it. Whisky's own downloader points at `data.getwhisky.app`, which is dead (confirm: `curl -I https://data.getwhisky.app/Libraries.zip` → 404) — never rely on Whisky's own "Install GPTK" button either, it shows a fake instant success and leaves an empty folder. The Internet Archive snapshot once documented here as the fallback is now unreliable itself — three consecutive live attempts hung/failed to connect rather than returning even an error — so **use this repo's archived copy as the first recovery source** (its runtime archive has no independently anchored digest in v1; content provenance remains unconfirmed, and the repo is public):
 
 ```bash
+set -e
 mkdir -p ~/Downloads   # transient scratch only — the .zip itself isn't at risk the way an extracted app bundle is, but move fast
 caffeinate -i curl -fL --progress-bar --max-time 300 -o ~/Downloads/WhiskyWine-Libraries.zip \
   https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/WhiskyWine-Libraries-2.5.0.zip
@@ -403,9 +404,10 @@ caffeinate -i curl -fL --progress-bar --max-time 300 -o ~/Downloads/WhiskyWine-L
 
 **`caffeinate -i` wraps this download** — unlike a browser download (which requests its own "stay awake" assertion automatically), a `curl` call run this way has no such protection. On a laptop that's idle-timeout-eligible, this download can take a few minutes; without `caffeinate`, the Mac going to sleep partway through would stall or corrupt it, and it isn't obvious to a user why. `caffeinate` here just holds the system awake for exactly as long as `curl` is running, then releases automatically.
 
-**If this repo's own release is ever unreachable too** (GitHub outage, etc.), the Internet Archive snapshot is a last-resort second fallback — same URL as before this version, now with a short timeout so a dead endpoint fails fast instead of hanging:
+**If this repo's own release is ever unreachable too** (GitHub outage, etc.), the Internet Archive snapshot is a last-resort second fallback with the same unconfirmed provenance and no independent digest; its short timeout makes a dead endpoint fail fast instead of hanging:
 
 ```bash
+set -e
 caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Libraries.zip \
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
@@ -413,6 +415,7 @@ caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Li
 Either way, continue identically from here:
 
 ```bash
+set -e
 cd ~/Downloads
 ditto -xk WhiskyWine-Libraries.zip .
 mkdir -p "$SUPPORT"
