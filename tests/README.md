@@ -3,6 +3,8 @@
 Run from the repository root:
 
     python3 tests/phase2a.py --run
+    python3 -m unittest discover -s tests -p 'test_*.py'
+    python3 tests/test_whisky.py
     python3 -m py_compile tests/phase2a.py
     git diff --check
 
@@ -41,3 +43,7 @@ Git fixtures. It exercises exact checkpoints, explicitly verified descendants,
 scoped dirty children, unrelated dirty state, volatile-state boundaries, and
 Phase Envelope validation. These tests prove repository control semantics only;
 they do not prove a live Whisky/Wine installation or any external service.
+
+The Whisky trust-boundary tests verify the fixed 2.3.5 source identity and
+Homebrew-anchored SHA-256 content policy. They reject mutable sources, wrong
+bytes, symlinks, malformed policy, and candidate-supplied trust values.

@@ -355,18 +355,20 @@ ls -d /Applications/Whisky.app ~/Applications/Whisky.app 2>/dev/null
 If neither path exists after that, fall back to the GitHub release:
 
 ```bash
-curl -fL --progress-bar -o /tmp/Whisky.zip \
-  https://github.com/Whisky-App/Whisky/releases/download/v2.3.5/Whisky.zip
+WHISKY_SOURCE="https://github.com/IsaacMarovitz/Whisky/releases/download/v2.3.5/Whisky.zip"
+curl -fL --progress-bar -o /tmp/Whisky.zip "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-download --file /tmp/Whisky.zip --source "$WHISKY_SOURCE"
 ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
 cp -R /tmp/Whisky-extract/Whisky.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
 ```
 
-**If that download itself fails** (Whisky's own upstream `Whisky-App/Whisky` GitHub release is a single point of failure — Whisky is unmaintained upstream, so a vanished tag/asset is a real possibility, not paranoia): fall back to this repo's own archived copy instead of giving up. This repo is public, so plain `curl` works with no auth needed:
+**If that download itself fails** (Whisky is unmaintained upstream, so a vanished tag/asset is possible): fall back to this repo's archived copy. The fallback is accepted only when its bytes match the same fixed release digest; its source provenance remains explicitly unconfirmed. This repo is public, so plain `curl` works with no auth needed:
 
 ```bash
-curl -fL --progress-bar -o /tmp/Whisky.zip \
-  https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip
+WHISKY_SOURCE="https://github.com/jirukouya/auRO-whisky-macOS-setup/releases/download/whisky-backup-2026-07-25/Whisky-app-2.3.5.zip"
+curl -fL --progress-bar -o /tmp/Whisky.zip "$WHISKY_SOURCE"
+python3 scripts/whisky.py verify-download --file /tmp/Whisky.zip --source "$WHISKY_SOURCE"
 ditto -xk /tmp/Whisky.zip /tmp/Whisky-extract
 cp -R /tmp/Whisky-extract/Whisky.app /Applications/
 xattr -dr com.apple.quarantine /Applications/Whisky.app 2>/dev/null || true
@@ -2132,7 +2134,7 @@ softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs
 # and let them run it themselves if they're certain.
 ```
 
-**If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky's own distribution channels are permanently dead upstream — the Homebrew cask is disabled and the WhiskyWine/GPTK download endpoint 404s (see the "Why this exists" background). Re-installing later will **not** work by just re-running Step 3/4 against the live internet; it depends on the archived copy already saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and is reachable before letting the user tear down their only working copy.
+**If Level 3+ is chosen, tell the user explicitly before they proceed:** Whisky is unmaintained upstream and its Homebrew cask is deprecated, while the WhiskyWine/GPTK download endpoint is unavailable (see the "Why this exists" background). Re-installing later depends on the fixed 2.3.5 release identity and the archived copy saved to this repo's GitHub Release (`whisky-backup-2026-07-25` on `jirukouya/auRO-whisky-macOS-setup`, or wherever the user's own copy of that release lives). Confirm that backup still exists and passes the Whisky verifier before letting the user tear down their only working copy.
 
 ## Credits & Disclaimer
 

@@ -1159,12 +1159,14 @@ def test_scope() -> None:
         "scripts/azzyai.py",
         "scripts/build_settings_runtime.py",
         "scripts/engineering_control.py",
+        "scripts/whisky.py",
         "scripts/uaro.py",
         "tests/README.md",
         "tests/phase2a.py",
         "tests/test_azzyai.py",
         "tests/test_engineering_control.py",
         "tests/test_settings_runtime.py",
+        "tests/test_whisky.py",
         "tests/test_uaro.py",
     }
     allowed_fixture_prefixes = ("tests/fixtures/azzyai-dc014477/",)

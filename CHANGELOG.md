@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 ### Added
+- Added an artifact-specific Whisky 2.3.5 source policy and SHA-256 download verifier.
+  Official and project fallback archives must match the digest anchored by the
+  Homebrew cask metadata before extraction; fallback provenance remains explicit.
+
 - Added a thin project-level `AGENTS.md` root contract and an evidence-only
   `scripts/engineering_control.py` control plane for repository snapshots,
   stale-checkpoint reconciliation, volatile state boundaries, Phase Envelope
