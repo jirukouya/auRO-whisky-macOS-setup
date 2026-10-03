@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Added
+- Added a thin project-level `AGENTS.md` root contract and an evidence-only
+  `scripts/engineering_control.py` control plane for repository snapshots,
+  stale-checkpoint reconciliation, volatile state boundaries, Phase Envelope
+  validation, and the compact architecture Advisor boundary. It does not grant
+  mutation or destructive authority.
+- Added fixture tests for exact, newer, scoped-dirty, unrelated-dirty, and
+  ambiguous control-plane states.
+
 ### Changed
 - Reworked `README.md` into a route-based front door for fresh installs, existing installs, verify-only checks, repairs, uninstall, and AzzyAI tasks.
 - Removed the stale hardcoded release heading and corrected the repository description to reflect its supporting references.

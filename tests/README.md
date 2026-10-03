@@ -35,3 +35,9 @@ also exercises the small descriptive JSONL evidence sidecar; the sidecar is not
 read by the replacement gate. Tests also inject evidence-write failures to
 confirm backup CLI failure status and restoration after a post-exchange append
 failure.
+
+`test_engineering_control.py` covers the Phase 0 control plane with temporary
+Git fixtures. It exercises exact checkpoints, explicitly verified descendants,
+scoped dirty children, unrelated dirty state, volatile-state boundaries, and
+Phase Envelope validation. These tests prove repository control semantics only;
+they do not prove a live Whisky/Wine installation or any external service.

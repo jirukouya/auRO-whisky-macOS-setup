@@ -1147,16 +1147,23 @@ def test_uaro_cli() -> None:
 def test_scope() -> None:
     # Phase 2C adds a bounded AzzyAI safety executor and its direct tests. Keep
     # the scope gate explicit so unrelated files still fail closed.
+    # Phase 2C adds a bounded AzzyAI safety executor and its direct tests.
+    # Phase 0 adds the evidence-only engineering control plane. Keep the scope
+    # gate explicit so unrelated files still fail closed.
     allowed = {
+        "AGENTS.md",
         "AZZYAI_FIXES.md",
+        "CHANGELOG.md",
         "README.md",
         "SKILL.md",
         "scripts/azzyai.py",
         "scripts/build_settings_runtime.py",
+        "scripts/engineering_control.py",
         "scripts/uaro.py",
         "tests/README.md",
         "tests/phase2a.py",
         "tests/test_azzyai.py",
+        "tests/test_engineering_control.py",
         "tests/test_settings_runtime.py",
         "tests/test_uaro.py",
     }
