@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 
@@ -115,6 +116,17 @@ class AzzyAiBackupTests(unittest.TestCase):
             return False
 
         result = azzyai.backup_user_ai(source, self.root / "backup", copy_fn=copy_then_fail)
+        self.assertEqual(result["copy"]["status"], "failed")
+        self.assertFalse(result["backup_verified"])
+
+    def test_nonzero_copy_result_blocks_even_with_success_output(self) -> None:
+        source = self.user_ai(files={"AI.lua": b"ai"})
+
+        def command_like_failure(src: Path, dst: Path) -> object:
+            shutil.copytree(src, dst)
+            return SimpleNamespace(returncode=1, stdout="SUCCESS", stderr="failed")
+
+        result = azzyai.backup_user_ai(source, self.root / "backup", copy_fn=command_like_failure)
         self.assertEqual(result["copy"]["status"], "failed")
         self.assertFalse(result["backup_verified"])
 
@@ -234,6 +246,55 @@ class AzzyAiReplacementTests(unittest.TestCase):
         self.assertIn("source changed", result["reason"])
         self.assertEqual(tree_bytes(destination), before)
 
+    def test_destination_symlink_after_authorization_blocks(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        external = self.root / "external"
+        external.mkdir()
+        (external / "AI.lua").write_bytes(b"old")
+        original = self.root / "old-user-ai"
+        destination.rename(original)
+        destination.symlink_to(external, target_is_directory=True)
+        result = azzyai.replace_user_ai(token)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("symlink", result["reason"])
+        self.assertEqual((external / "AI.lua").read_bytes(), b"old")
+
+    def test_destination_parent_exchange_after_authorization_blocks(self) -> None:
+        staged = self.tree("staged", {"AI.lua": b"new"})
+        container = self.root / "container"
+        container.mkdir()
+        destination = container / "USER_AI"
+        destination.mkdir()
+        (destination / "AI.lua").write_bytes(b"old")
+        result, token = azzyai.authorize_user_ai_replacement(
+            staged, destination, self.root / "external-backup"
+        )
+        self.assertTrue(result["replacement_authorized"])
+        assert token is not None
+        external = self.root / "external-parent"
+        external.mkdir()
+        (external / "USER_AI").mkdir()
+        (external / "USER_AI" / "AI.lua").write_bytes(b"external")
+        moved = self.root / "moved-container"
+        container.rename(moved)
+        container.symlink_to(external, target_is_directory=True)
+        replaced = azzyai.replace_user_ai(token)
+        self.assertEqual(replaced["result"], "blocked")
+        self.assertIn("identity changed", replaced["reason"])
+        self.assertEqual((external / "USER_AI" / "AI.lua").read_bytes(), b"external")
+
+    def test_verified_backup_change_after_authorization_blocks(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        backup = token.backup
+        (backup / "AI.lua").write_bytes(b"tampered-backup")
+        before = tree_bytes(destination)
+        result = azzyai.replace_user_ai(token)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("backup", result["reason"])
+        self.assertEqual(tree_bytes(destination), before)
+
     def test_destination_change_after_authorization_blocks(self) -> None:
         _, token, _, destination = self.authorize()
         assert token is not None
@@ -257,6 +318,7 @@ class AzzyAiReplacementTests(unittest.TestCase):
         result = azzyai.replace_user_ai(token, copy_fn=copy_then_fail)
         self.assertEqual(result["result"], "blocked")
         self.assertIn("USER_AI was not changed", result["reason"])
+        self.assertTrue(result["staging_cleaned"])
         self.assertEqual(tree_bytes(destination), before)
 
     def test_replacement_staging_mismatch_blocks(self) -> None:
@@ -271,6 +333,21 @@ class AzzyAiReplacementTests(unittest.TestCase):
         result = azzyai.replace_user_ai(token, copy_fn=corrupt)
         self.assertEqual(result["result"], "blocked")
         self.assertEqual(result["comparison"]["status"], "mismatch")
+        self.assertTrue(result["staging_cleaned"])
+        self.assertEqual(tree_bytes(destination), before)
+
+    def test_nonzero_replacement_result_blocks_even_with_success_output(self) -> None:
+        _, token, _, destination = self.authorize()
+        assert token is not None
+        before = tree_bytes(destination)
+
+        def command_like_failure(src: Path, dst: Path) -> object:
+            shutil.copytree(src, dst)
+            return SimpleNamespace(returncode=1, stdout="SUCCESS", stderr="failed")
+
+        result = azzyai.replace_user_ai(token, copy_fn=command_like_failure)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["copy"]["status"], "failed")
         self.assertEqual(tree_bytes(destination), before)
 
     def test_cli_emits_structured_success(self) -> None:

@@ -14,8 +14,10 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 from typing import Callable, Dict, Optional, Tuple
 
 
@@ -26,6 +28,51 @@ class UnsupportedEntryError(Exception):
 TreeEntry = Tuple[str, int, str]
 TreeSnapshot = Dict[str, TreeEntry]
 CopyFn = Callable[[Path, Path], object]
+
+
+def _copy_failed(outcome: object) -> bool:
+    """Reject explicit failure statuses, even if stdout says "success"."""
+
+    if outcome is False:
+        return True
+    returncode = None
+    if isinstance(outcome, dict) and "returncode" in outcome:
+        returncode = outcome["returncode"]
+    elif hasattr(outcome, "returncode"):
+        returncode = getattr(outcome, "returncode")
+    if returncode is not None:
+        try:
+            return int(returncode) != 0
+        except (TypeError, ValueError):
+            return True
+    if isinstance(outcome, dict) and "success" in outcome:
+        return outcome["success"] is not True
+    if hasattr(outcome, "success"):
+        return getattr(outcome, "success") is not True
+    return False
+
+
+def _identity(path: Path, *, follow_symlinks: bool = True) -> Tuple[int, int]:
+    metadata = os.stat(path, follow_symlinks=follow_symlinks)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _is_symlink(path: Path) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _cleanup_staging(path: Path) -> None:
+    """Remove only the temporary staging tree created by this transaction."""
+
+    if _is_symlink(path):
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
 def _snapshot_tree(root: Path) -> TreeSnapshot:
@@ -210,7 +257,7 @@ def backup_user_ai(
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
         copy_outcome = copier(source, destination)
-        if copy_outcome is False:
+        if _copy_failed(copy_outcome):
             raise RuntimeError("copy operation reported failure")
         result["mutation"] = True
         result["copy"] = {"status": "succeeded", "success": True}
@@ -252,6 +299,11 @@ class ReplacementAuthorization:
     backup: Path
     source_snapshot: Tuple[Tuple[str, TreeEntry], ...]
     destination_snapshot: Tuple[Tuple[str, TreeEntry], ...]
+    backup_snapshot: Tuple[Tuple[str, TreeEntry], ...]
+    source_identity: Tuple[int, int]
+    destination_identity: Tuple[int, int]
+    destination_parent_identity: Tuple[int, int]
+    backup_identity: Tuple[int, int]
     _marker: object
 
 
@@ -298,8 +350,14 @@ def authorize_user_ai_replacement(
         if _paths_overlap(source, backup) or _paths_overlap(destination, backup):
             result["reason"] = "backup destination overlaps a USER_AI tree"
             return result, None
+        if _is_symlink(source) or _is_symlink(destination) or _is_symlink(backup):
+            result["reason"] = "source, destination, and backup roots must not be symlinks"
+            return result, None
         source_snapshot = _snapshot_tree(source)
         destination_snapshot = _snapshot_tree(destination)
+        source_identity = _identity(source)
+        destination_identity = _identity(destination)
+        destination_parent_identity = _identity(destination.parent)
     except (OSError, RuntimeError, UnsupportedEntryError) as exc:
         result["reason"] = f"cannot classify replacement trees: {exc}"
         return result, None
@@ -312,6 +370,13 @@ def authorize_user_ai_replacement(
         result["reason"] = backup_result.get("reason", "USER_AI backup was not verified")
         return result, None
 
+    try:
+        backup_snapshot = _snapshot_tree(backup)
+        backup_identity = _identity(backup)
+    except (OSError, RuntimeError, UnsupportedEntryError) as exc:
+        result["reason"] = f"cannot bind verified backup evidence: {exc}"
+        return result, None
+
     # The source and destination snapshots are bound to this one authorization;
     # later replacement revalidates both before any directory exchange.
     token = ReplacementAuthorization(
@@ -320,6 +385,11 @@ def authorize_user_ai_replacement(
         backup=backup,
         source_snapshot=_freeze_snapshot(source_snapshot),
         destination_snapshot=_freeze_snapshot(destination_snapshot),
+        backup_snapshot=_freeze_snapshot(backup_snapshot),
+        source_identity=source_identity,
+        destination_identity=destination_identity,
+        destination_parent_identity=destination_parent_identity,
+        backup_identity=backup_identity,
         _marker=_AUTHORIZATION_MARKER,
     )
     result.update(
@@ -376,8 +446,24 @@ def replace_user_ai(
     try:
         if _paths_overlap(source, destination):
             return _blocked_replacement("staged source and USER_AI destination overlap", authorization=True)
+        if _is_symlink(source) or _is_symlink(destination) or _is_symlink(authorization.backup):
+            result["reason"] = "source, destination, and backup roots must not be symlinks"
+            return result
+        if _identity(source) != authorization.source_identity:
+            result["reason"] = "staged AzzyAI source identity changed after authorization"
+            return result
+        if _identity(destination) != authorization.destination_identity:
+            result["reason"] = "USER_AI destination identity changed after authorization"
+            return result
+        if _identity(destination.parent) != authorization.destination_parent_identity:
+            result["reason"] = "USER_AI destination parent changed after authorization"
+            return result
+        if _identity(authorization.backup) != authorization.backup_identity:
+            result["reason"] = "verified USER_AI backup identity changed after authorization"
+            return result
         source_now = _snapshot_tree(source)
         destination_now = _snapshot_tree(destination)
+        backup_now = _snapshot_tree(authorization.backup)
     except (OSError, RuntimeError, UnsupportedEntryError) as exc:
         result["reason"] = f"cannot revalidate replacement trees: {exc}"
         return result
@@ -387,6 +473,12 @@ def replace_user_ai(
         return result
     if _freeze_snapshot(destination_now) != authorization.destination_snapshot:
         result["reason"] = "USER_AI destination changed after backup authorization"
+        return result
+    if _freeze_snapshot(backup_now) != authorization.backup_snapshot:
+        result["reason"] = "verified USER_AI backup changed after authorization"
+        return result
+    if backup_now != destination_now:
+        result["reason"] = "verified USER_AI backup no longer matches destination"
         return result
 
     staging = destination.parent / f".{destination.name}.azzyai-staging"
@@ -403,19 +495,31 @@ def replace_user_ai(
         staging.parent.mkdir(parents=True, exist_ok=True)
         copy_outcome = copier(source, staging)
         result["mutation"] = True
-        if copy_outcome is False:
+        if _copy_failed(copy_outcome):
             raise RuntimeError("copy operation reported failure")
         result["copy"] = {"status": "succeeded", "success": True}
     except Exception as exc:
         result["copy"] = {"status": "failed", "success": False}
-        result["staging"] = str(staging)
+        try:
+            _cleanup_staging(staging)
+            result["staging_cleaned"] = True
+        except OSError as cleanup_error:
+            result["staging"] = str(staging)
+            result["reason"] = f"replacement copy failed and staging cleanup failed; USER_AI was not changed: {cleanup_error}"
+            return result
         result["reason"] = f"replacement copy failed; USER_AI was not changed: {exc}"
         return result
 
     comparison = _compare_trees(source, staging)
     result["comparison"] = comparison
     if comparison["status"] != "equal":
-        result["staging"] = str(staging)
+        try:
+            _cleanup_staging(staging)
+            result["staging_cleaned"] = True
+        except OSError as cleanup_error:
+            result["staging"] = str(staging)
+            result["reason"] = f"replacement staging comparison failed and cleanup failed: {cleanup_error}"
+            return result
         result["reason"] = comparison.get("reason", "replacement staging comparison failed")
         return result
 
