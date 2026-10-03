@@ -36,6 +36,13 @@ class WhiskyPolicyTests(unittest.TestCase):
         self.assertNotIn('curl -fL --progress-bar -o "$INSTALLER_ZIP"', block)
         self.assertNotIn('cp "$INSTALLER_SOURCE" "$INSTALLER_ZIP"', block)
 
+    def test_troubleshooting_cask_row_matches_current_whisky_route(self) -> None:
+        troubleshooting = (Path(__file__).resolve().parents[1] / "TROUBLESHOOTING.md").read_text()
+        row = next(line for line in troubleshooting.splitlines() if "`brew install --cask whisky` exits 0" in line)
+        self.assertIn("diagnostic probe only", row)
+        self.assertIn("exact v2.3.5 release verifier", row)
+        self.assertNotIn("fall back to GitHub release zip only if truly absent", row)
+
     def test_skill_download_routes_fail_closed_and_extract_verified_snapshot(self) -> None:
         skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
         start = skill.index("## Step 3 — Whisky.app")

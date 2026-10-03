@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   ambiguous control-plane states.
 
 ### Changed
+- The troubleshooting cask row now matches the current exact-release Whisky
+  route and no longer presents the mutable Homebrew cask as a fallback
+  acquisition path.
 - Step 6 now stages the user-supplied uaRO installer into a temporary file
   and atomically replaces the extraction input only after a non-empty
   successful copy/download, so a failed fetch cannot fall through to an older
