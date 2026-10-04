@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 ### Added
+- Added a minimal macOS GitHub Actions verification workflow for pull requests
+  and pushes to `main`. It runs the repository-native unit, Phase 2A, Whisky,
+  AzzyAI, Python compilation, and whitespace checks. Its result is deterministic
+  regression evidence only and does not claim live Whisky/Wine/game behavior or
+  external provenance.
 - Added an explicit-path, read-only `uaro.py doctor` route that aggregates
   structural FCOM, launcher, savedata, and optional Settings runtime evidence
   without discovery, repair, launch, download, signing, or deletion. Live

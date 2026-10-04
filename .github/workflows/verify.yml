@@ -1,0 +1,44 @@
+name: Deterministic repository verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repository-native:
+    name: Repository-native tests and static checks
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up supported Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compile Python sources
+        run: python3 -m py_compile scripts/*.py tests/*.py
+
+      - name: Run repository unit suite
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run Phase 2A contract harness
+        run: python3 -B tests/phase2a.py --run
+
+      - name: Run Whisky trust suite
+        run: python3 -B tests/test_whisky.py
+
+      - name: Run AzzyAI trust suite
+        run: python3 -B tests/test_azzyai.py
+
+      - name: Check patch whitespace
+        run: git diff --check
