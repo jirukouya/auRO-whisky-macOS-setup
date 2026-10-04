@@ -17,6 +17,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import uaro  # noqa: E402
+import build_settings_runtime as settings_builder  # noqa: E402
 
 
 def fixture_binary(site_a: bytes, site_b: bytes, size: int | None = None) -> bytes:
@@ -572,6 +573,21 @@ class InspectTests(unittest.TestCase):
     def inspect(self, game: Path, apps: Path | None = None) -> dict[str, object]:
         return uaro.inspect_install(game, apps)
 
+    def doctor(
+        self,
+        game: Path,
+        apps: Path | None = None,
+        settings_runtime: Path | None = None,
+    ) -> dict[str, object]:
+        return uaro.doctor_install(game, apps, settings_runtime)
+
+    def make_healthy_game(self, name: str = "healthy-game") -> Path:
+        game = self.make_game(name)
+        (game / "uaRO.exe").write_bytes(b"game")
+        (game / "setup.exe").write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        (game / "savedata").mkdir()
+        return game
+
     def test_missing_game_dir_is_structurally_reported(self) -> None:
         result = self.inspect(self.root / "missing-game")
         self.assertTrue(result["result"] == "success")
@@ -674,6 +690,195 @@ class InspectTests(unittest.TestCase):
         payload = json.loads(process.stdout)
         self.assertEqual(payload["operation"], "inspect")
         self.assertFalse(payload["mutation"])
+
+    def test_doctor_reports_structural_health_without_live_claims(self) -> None:
+        game = self.make_healthy_game()
+        before = tree_snapshot(self.root)
+        result = self.doctor(game)
+        self.assertEqual(result["operation"], "doctor")
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(result["overall_state"], "PASS")
+        self.assertEqual(result["checks"]["fcom"]["state"], "PASS")
+        self.assertEqual(result["checks"]["launchers"]["state"], "UNKNOWN")
+        self.assertEqual(result["checks"]["freshness"]["state"], "UNKNOWN")
+        self.assertEqual(result["settings_runtime_dir"], None)
+        self.assertEqual(result["execution"], "UNCONFIRMED")
+        self.assertEqual(result["behavior"], "UNCONFIRMED")
+        self.assertFalse(result["mutation"])
+        self.assertFalse(result["deletion_authority"])
+        self.assertEqual(tree_snapshot(self.root), before)
+
+    def test_doctor_blocks_unpatched_or_missing_required_state(self) -> None:
+        game = self.make_game()
+        (game / "setup.exe").write_bytes(fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED))
+        result = self.doctor(game)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["overall_state"], "BLOCKED")
+        self.assertEqual(result["checks"]["core_files"]["uaro_exe"]["state"], "BLOCKED")
+        self.assertEqual(result["checks"]["fcom"]["observed_state"], "UNPATCHED")
+        self.assertFalse(result["mutation"])
+
+    def test_doctor_rejects_symlinked_game_directory(self) -> None:
+        external = self.make_healthy_game("external-game")
+        link = self.root / "game-link"
+        link.symlink_to(external, target_is_directory=True)
+        before = tree_snapshot(self.root)
+        result = self.doctor(link)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["checks"]["game_directory"]["state"], "BLOCKED")
+        self.assertEqual(result["checks"]["core_files"]["state"], "BLOCKED")
+        self.assertEqual(tree_snapshot(self.root), before)
+
+    def test_doctor_blocks_missing_required_launcher(self) -> None:
+        game = self.make_healthy_game()
+        apps = self.root / "apps"
+        apps.mkdir()
+        (apps / "UaRO Settings.app").mkdir()
+        result = self.doctor(game, apps)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["checks"]["launchers"]["state"], "BLOCKED")
+        self.assertEqual(result["checks"]["launchers"]["evidence"]["UaRO Patcher.app"]["state"], "BLOCKED")
+        self.assertEqual(result["checks"]["launchers"]["evidence"]["UaRO Game.app"]["state"], "UNKNOWN")
+
+    def test_doctor_blocks_malformed_settings_runtime(self) -> None:
+        game = self.make_healthy_game()
+        runtime = self.root / "settings-runtime"
+        runtime.mkdir()
+        (runtime / "MANIFEST.json").write_text("not-json", encoding="utf-8")
+        result = self.doctor(game, settings_runtime=runtime)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["checks"]["settings_runtime"]["state"], "BLOCKED")
+        self.assertIn("malformed", result["checks"]["settings_runtime"]["reason"])
+
+    def test_doctor_blocks_unsupported_savedata_entry(self) -> None:
+        game = self.make_healthy_game()
+        (game / "savedata" / "link").symlink_to("missing")
+        result = self.doctor(game)
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["checks"]["savedata"]["state"], "BLOCKED")
+
+    def test_doctor_reuses_settings_runtime_verifier(self) -> None:
+        game = self.make_healthy_game()
+        fixture_repo = self.root / "canonical-repo"
+        (fixture_repo / "scripts").mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts" / "uaro.py", fixture_repo / "scripts" / "uaro.py")
+        shutil.copy2(
+            ROOT / "scripts" / "settings_runtime_verify.py",
+            fixture_repo / "scripts" / "settings_runtime_verify.py",
+        )
+        subprocess.run(["git", "-C", str(fixture_repo), "init", "-q"], check=True)
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "config", "user.email", "test@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "config", "user.name", "Test User"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(fixture_repo),
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/jirukouya/auRO-whisky-macOS-setup.git",
+            ],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(fixture_repo), "add", "scripts"], check=True)
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "commit", "-q", "-m", "fixture"],
+            check=True,
+        )
+        runtime = self.root / "settings-runtime"
+        built = settings_builder.build_settings_runtime(fixture_repo, runtime, sys.executable)
+        self.assertEqual(built["result"], "success")
+        result = self.doctor(game, settings_runtime=runtime)
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(result["checks"]["settings_runtime"]["state"], "PASS")
+        self.assertTrue(result["checks"]["settings_runtime"]["evidence"]["executor_verified"])
+        self.assertEqual(
+            result["checks"]["settings_runtime"]["evidence"]["verification_scope"],
+            "static_bundle",
+        )
+
+    def test_doctor_never_executes_declared_runtime_interpreter(self) -> None:
+        game = self.make_healthy_game()
+        fixture_repo = self.root / "canonical-repo-static"
+        (fixture_repo / "scripts").mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts" / "uaro.py", fixture_repo / "scripts" / "uaro.py")
+        shutil.copy2(
+            ROOT / "scripts" / "settings_runtime_verify.py",
+            fixture_repo / "scripts" / "settings_runtime_verify.py",
+        )
+        subprocess.run(["git", "-C", str(fixture_repo), "init", "-q"], check=True)
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "config", "user.email", "test@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "config", "user.name", "Test User"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(fixture_repo),
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/jirukouya/auRO-whisky-macOS-setup.git",
+            ],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(fixture_repo), "add", "scripts"], check=True)
+        subprocess.run(
+            ["git", "-C", str(fixture_repo), "commit", "-q", "-m", "fixture"],
+            check=True,
+        )
+        runtime = self.root / "settings-runtime-static"
+        settings_builder.build_settings_runtime(fixture_repo, runtime, sys.executable)
+        marker = self.root / "interpreter-ran"
+        wrapper = self.root / "declared-interpreter"
+        wrapper.write_text(
+            f"#!{sys.executable}\n"
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+            "raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+        manifest_path = runtime / "MANIFEST.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["python"]["invocation_path"] = str(wrapper)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        result = self.doctor(game, settings_runtime=runtime)
+        self.assertEqual(result["result"], "success")
+        self.assertEqual(result["checks"]["settings_runtime"]["state"], "PASS")
+        self.assertFalse(marker.exists())
+        self.assertEqual(
+            result["checks"]["settings_runtime"]["evidence"]["python_status"],
+            "UNCONFIRMED",
+        )
+
+    def test_doctor_cli_emits_structured_read_only_result(self) -> None:
+        game = self.make_healthy_game()
+        before = tree_snapshot(self.root)
+        process = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "uaro.py"), "doctor", "--game-dir", str(game)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(process.returncode, 0)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["operation"], "doctor")
+        self.assertEqual(payload["overall_state"], "PASS")
+        self.assertFalse(payload["mutation"])
+        self.assertEqual(tree_snapshot(self.root), before)
 
 
 if __name__ == "__main__":

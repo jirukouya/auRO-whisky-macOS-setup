@@ -27,6 +27,23 @@ or ask it to read the current `SKILL.md` from this repository. The skill is
 designed to stop before human-only actions such as account login, GUI clicks,
 or administrator-password entry.
 
+For a concise structural health snapshot of an existing install, run the
+explicit-path doctor from the repository root:
+
+```sh
+python3 scripts/uaro.py doctor --game-dir "$GAME_DIR"
+# Optionally add: --apps-dir "$APPS_DIR" --settings-runtime-dir "$SETTINGS_RUNTIME_DIR"
+```
+
+The `--apps-dir` and `--settings-runtime-dir` flags are optional; omit them
+when those explicit paths are not available.
+
+The doctor never discovers paths, launches Wine, downloads, repairs, signs, or
+deletes anything. `PASS` covers only the supplied structural/local-artifact
+checks. Settings runtime verification is static-only in this route: the
+declared Python interpreter is not executed. Execution, behavior, and patch
+freshness remain `UNCONFIRMED`.
+
 ## What this skill solves
 
 uaRO is a Windows-only Ragnarok Online private server protected by Gepard

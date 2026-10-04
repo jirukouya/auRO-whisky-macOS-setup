@@ -276,8 +276,20 @@ def _sha256_artifact(path: Path, label: str) -> str:
         raise SettingsRuntimeVerificationError(f"deployed {label} cannot be read") from exc
 
 
-def verify_settings_runtime(runtime_dir: str | os.PathLike[str]) -> Dict[str, Any]:
-    """Verify a complete runtime using only bundle-local files and metadata."""
+def verify_settings_runtime(
+    runtime_dir: str | os.PathLike[str],
+    *,
+    verify_python: bool = True,
+) -> Dict[str, Any]:
+    """Verify bundle identity and, optionally, execute its declared Python probe.
+
+    ``verify_python=False`` is a static-only mode for callers that promise not
+    to execute artifacts referenced by the bundle. It validates the Python
+    contract's data shape but leaves interpreter usability UNCONFIRMED.
+    """
+
+    if type(verify_python) is not bool:
+        raise SettingsRuntimeVerificationError("verify_python must be boolean")
 
     root = Path(runtime_dir).expanduser()
     if not root.is_dir() or root.is_symlink():
@@ -312,12 +324,27 @@ def verify_settings_runtime(runtime_dir: str | os.PathLike[str]) -> Dict[str, An
     if actual_verifier_digest != expected_verifier_digest:
         raise SettingsRuntimeVerificationError("deployed verifier digest mismatch")
 
-    try:
-        active_python = _validate_active_python()
-        python_evidence = validate_python_runtime(manifest["python"])
-    except PythonRuntimeError as exc:
-        raise SettingsRuntimeVerificationError(str(exc)) from exc
-    python_evidence["active"] = active_python
+    if verify_python:
+        try:
+            active_python = _validate_active_python()
+            python_evidence = validate_python_runtime(manifest["python"])
+        except PythonRuntimeError as exc:
+            raise SettingsRuntimeVerificationError(str(exc)) from exc
+        python_evidence["active"] = active_python
+        result = "PASS"
+        python_verified = True
+        python_status = "PASS"
+        reason = "runtime artifact satisfies its deterministic contract"
+    else:
+        python_evidence = {
+            "status": "UNCONFIRMED",
+            "reason": "static-only mode does not execute the manifest interpreter",
+            "declared_contract": manifest["python"],
+        }
+        result = "STRUCTURAL_PASS"
+        python_verified = False
+        python_status = "UNCONFIRMED"
+        reason = "bundle files and metadata match; interpreter usability was not executed"
     return {
         "operation": "settings_runtime_verify",
         "runtime_dir": str(root),
@@ -325,9 +352,11 @@ def verify_settings_runtime(runtime_dir: str | os.PathLike[str]) -> Dict[str, An
         "interface_version": INTERFACE_VERSION,
         "executor_verified": True,
         "verifier_verified": True,
-        "python_verified": True,
-        "result": "PASS",
-        "reason": "runtime artifact satisfies its deterministic contract",
+        "python_verified": python_verified,
+        "python_status": python_status,
+        "verification_scope": "full_runtime" if verify_python else "static_bundle",
+        "result": result,
+        "reason": reason,
         "executor_sha256": actual_executor_digest,
         "verifier_sha256": actual_verifier_digest,
         "python": python_evidence,

@@ -1161,6 +1161,7 @@ def test_scope() -> None:
         "scripts/azzyai.py",
         "scripts/build_settings_runtime.py",
         "scripts/engineering_control.py",
+        "scripts/settings_runtime_verify.py",
         "scripts/whisky.py",
         "scripts/whiskywine.py",
         "scripts/uaro.py",

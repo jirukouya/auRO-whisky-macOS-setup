@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Small deterministic uaRO execution primitives.
 
-This spike contains the Phase 2A FCOM transaction, savedata backup, and
-explicit-path structural inspection. It intentionally does not discover uaRO
-paths or perform installation, repair, launcher, or uninstall work.
+This module contains the Phase 2A FCOM transaction, savedata backup, and
+explicit-path structural/health inspection. It intentionally does not discover
+uaRO paths or perform installation, repair, launcher, or uninstall work.
 """
 
 from __future__ import annotations
@@ -703,6 +703,241 @@ def inspect_install(
     }
 
 
+def _doctor_path_state(
+    path_value: Optional[str | Path],
+    label: str,
+    *,
+    required: bool,
+) -> Dict[str, object]:
+    """Classify one explicitly supplied directory without following a root symlink."""
+
+    if path_value is None:
+        return {
+            "state": "UNKNOWN",
+            "path": None,
+            "reason": f"{label} was not supplied",
+            "required": required,
+        }
+    path = Path(path_value).expanduser()
+    if path.is_symlink():
+        return {
+            "state": "BLOCKED",
+            "path": str(path),
+            "reason": f"{label} must not be a symlink",
+            "required": required,
+        }
+    if not path.exists():
+        return {
+            "state": "BLOCKED" if required else "UNKNOWN",
+            "path": str(path),
+            "reason": f"{label} is missing",
+            "required": required,
+        }
+    if not path.is_dir():
+        return {
+            "state": "BLOCKED",
+            "path": str(path),
+            "reason": f"{label} is not a directory",
+            "required": required,
+        }
+    return {
+        "state": "PASS",
+        "path": str(path),
+        "reason": f"{label} is an explicit regular directory",
+        "required": required,
+    }
+
+
+def _doctor_regular_file_state(path: Path, label: str) -> Dict[str, object]:
+    if path.is_symlink():
+        return {"state": "BLOCKED", "path": str(path), "reason": f"{label} must not be a symlink"}
+    if not path.exists():
+        return {"state": "BLOCKED", "path": str(path), "reason": f"{label} is missing"}
+    if not path.is_file():
+        return {"state": "BLOCKED", "path": str(path), "reason": f"{label} is not a regular file"}
+    return {"state": "PASS", "path": str(path), "reason": f"{label} is present"}
+
+
+def _doctor_fcom_state(fcom: Dict[str, object]) -> Dict[str, object]:
+    observed = fcom.get("state", "UNKNOWN")
+    if observed == "PATCHED" and fcom.get("result") == "success":
+        state = "PASS"
+        reason = "FCOM sites are classified as PATCHED"
+    elif observed == "UNPATCHED" and fcom.get("result") == "success":
+        state = "BLOCKED"
+        reason = "FCOM sites are unpatched; repair remains a separate mutation route"
+    else:
+        state = "BLOCKED"
+        reason = f"FCOM evidence is not a safe healthy state: {observed}"
+    return {
+        "state": state,
+        "observed_state": observed,
+        "reason": reason,
+        "evidence": fcom,
+    }
+
+
+def _doctor_settings_runtime_state(runtime_dir: Optional[str | Path]) -> Dict[str, object]:
+    if runtime_dir is None:
+        return {
+            "state": "UNKNOWN",
+            "path": None,
+            "reason": "Settings runtime directory was not supplied",
+        }
+    path_state = _doctor_path_state(runtime_dir, "Settings runtime directory", required=True)
+    if path_state["state"] != "PASS":
+        return path_state
+    try:
+        from settings_runtime_verify import SettingsRuntimeError, verify_settings_runtime
+
+        evidence = verify_settings_runtime(path_state["path"], verify_python=False)
+    except ImportError as exc:
+        return {
+            "state": "BLOCKED",
+            "path": path_state["path"],
+            "reason": f"Settings runtime verifier is unavailable: {exc}",
+        }
+    except SettingsRuntimeError as exc:
+        return {
+            "state": "BLOCKED",
+            "path": path_state["path"],
+            "reason": str(exc),
+        }
+    return {
+        "state": "PASS" if evidence.get("result") == "STRUCTURAL_PASS" else "BLOCKED",
+        "path": path_state["path"],
+        "python_runtime": "UNCONFIRMED",
+        "reason": "Settings bundle files and metadata match; declared Python was not executed",
+        "evidence": evidence,
+    }
+
+
+def doctor_install(
+    game_dir_path: str | Path,
+    apps_dir_path: Optional[str | Path] = None,
+    settings_runtime_dir: Optional[str | Path] = None,
+) -> Dict[str, object]:
+    """Aggregate explicit structural facts without mutation or implicit discovery.
+
+    A PASS result means only that the requested structural checks passed. Live
+    execution, game behavior, and patch freshness remain explicitly unknown.
+    """
+
+    game_state = _doctor_path_state(game_dir_path, "game directory", required=True)
+    checks: Dict[str, object] = {
+        "game_directory": game_state,
+        "freshness": {
+            "state": "UNKNOWN",
+            "reason": "No authoritative server patch-cycle or local freshness signal was supplied",
+        },
+    }
+    if game_state["state"] == "PASS":
+        game_dir = Path(game_state["path"])
+        inspection = inspect_install(game_dir, apps_dir_path)
+        core_files = {
+            "uaro_exe": _doctor_regular_file_state(game_dir / "uaRO.exe", "uaRO.exe"),
+            "setup_exe": _doctor_regular_file_state(game_dir / "setup.exe", "setup.exe"),
+        }
+        checks["core_files"] = core_files
+        checks["fcom"] = _doctor_fcom_state(inspection["evidence"]["fcom"])
+        savedata_evidence = inspection["evidence"]["savedata"]
+        savedata_state = savedata_evidence["state"]
+        checks["savedata"] = {
+            "state": (
+                "PASS"
+                if savedata_state in ("empty", "populated")
+                else "BLOCKED"
+                if savedata_state == "unsupported"
+                else "UNKNOWN"
+            ),
+            "evidence": savedata_evidence,
+            "reason": "savedata directory is readable; absence is not treated as zero data",
+        }
+    else:
+        checks.update(
+            {
+                "core_files": {"state": "BLOCKED", "reason": "game directory is unavailable"},
+                "fcom": {"state": "BLOCKED", "reason": "game directory is unavailable"},
+                "savedata": {"state": "UNKNOWN", "reason": "game directory is unavailable"},
+            }
+        )
+
+    if apps_dir_path is None:
+        checks["launchers"] = _doctor_path_state(None, "launcher directory", required=False)
+    else:
+        apps_state = _doctor_path_state(apps_dir_path, "launcher directory", required=True)
+        if apps_state["state"] == "PASS":
+            apps = inspect_install(game_dir_path, apps_dir_path)["apps"]
+            required_names = ("UaRO Patcher.app", "UaRO Settings.app")
+            launcher_checks = {
+                name: {
+                    "state": (
+                        "PASS"
+                        if apps[name]["exists"] and not (Path(apps_dir_path) / name).is_symlink()
+                        else "BLOCKED"
+                    ),
+                    "exists": apps[name]["exists"],
+                    "required": apps[name]["required"],
+                }
+                for name in required_names
+            }
+            optional = apps["UaRO Game.app"]
+            launcher_checks["UaRO Game.app"] = {
+                "state": (
+                    "PASS"
+                    if optional["exists"] and not (Path(apps_dir_path) / "UaRO Game.app").is_symlink()
+                    else "UNKNOWN"
+                ),
+                "exists": optional["exists"],
+                "required": False,
+            }
+            checks["launchers"] = {
+                "state": (
+                    "PASS"
+                    if all(
+                        item["state"] == "PASS"
+                        for name, item in launcher_checks.items()
+                        if name != "UaRO Game.app"
+                    )
+                    else "BLOCKED"
+                ),
+                "path": str(apps_dir_path),
+                "evidence": launcher_checks,
+            }
+        else:
+            checks["launchers"] = apps_state
+
+    checks["settings_runtime"] = _doctor_settings_runtime_state(settings_runtime_dir)
+    blocking = []
+    for name, value in checks.items():
+        if isinstance(value, dict) and value.get("state") == "BLOCKED":
+            blocking.append(name)
+        elif name == "core_files" and isinstance(value, dict):
+            if any(item.get("state") == "BLOCKED" for item in value.values() if isinstance(item, dict)):
+                blocking.append(name)
+    result = "blocked" if blocking else "success"
+    return {
+        "operation": "doctor",
+        "capability": "READ",
+        "game_dir": str(game_dir_path),
+        "apps_dir": str(apps_dir_path) if apps_dir_path is not None else None,
+        "settings_runtime_dir": str(settings_runtime_dir) if settings_runtime_dir is not None else None,
+        "checks": checks,
+        "overall_state": "BLOCKED" if blocking else "PASS",
+        "evidence_scope": "explicit structural and local-artifact facts only",
+        "execution": "UNCONFIRMED",
+        "behavior": "UNCONFIRMED",
+        "mutation": False,
+        "deletion_authority": False,
+        "result": result,
+        "reason": (
+            "; ".join(f"blocked: {name}" for name in blocking)
+            if blocking
+            else "requested structural checks passed; live claims remain unconfirmed"
+        ),
+    }
+
+
 def _emit(result: Dict[str, object]) -> int:
     print(json.dumps(result, sort_keys=True))
     return 0 if result.get("result") == "success" else 1
@@ -725,6 +960,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     inspect = subparsers.add_parser("inspect", help="inspect explicit paths without mutation")
     inspect.add_argument("--game-dir", required=True)
     inspect.add_argument("--apps-dir")
+    doctor = subparsers.add_parser("doctor", help="aggregate explicit health facts without mutation")
+    doctor.add_argument("--game-dir", required=True)
+    doctor.add_argument("--apps-dir")
+    doctor.add_argument("--settings-runtime-dir")
     args = parser.parse_args(argv)
 
     if args.area == "fcom" and args.operation == "check":
@@ -735,6 +974,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return _emit(backup_savedata(args.game_dir, args.destination))
     if args.area == "inspect":
         return _emit(inspect_install(args.game_dir, args.apps_dir))
+    if args.area == "doctor":
+        return _emit(doctor_install(args.game_dir, args.apps_dir, args.settings_runtime_dir))
     parser.error("unsupported operation")
     return 2
 

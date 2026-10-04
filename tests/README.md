@@ -8,6 +8,17 @@ Run from the repository root:
     python3 -m py_compile tests/phase2a.py
     git diff --check
 
+The production read-only health route accepts only explicit paths:
+
+    python3 scripts/uaro.py doctor --game-dir "$GAME_DIR"
+    # Optionally add: --apps-dir "$APPS_DIR" --settings-runtime-dir "$SETTINGS_RUNTIME_DIR"
+
+The two optional flags may be omitted when those explicit paths are unavailable.
+It reports structural/local-artifact facts and keeps execution, behavior, and
+patch freshness unconfirmed. Its Settings runtime check is static-only and
+does not execute the manifest interpreter. It never performs repair, launch,
+download, signing, or deletion.
+
 The harness uses Python's standard library only. It creates temporary fixtures
 and never invokes Whisky, Wine, uaRO, a real launcher, or a deletion command.
 
