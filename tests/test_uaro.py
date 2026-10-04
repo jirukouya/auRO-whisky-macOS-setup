@@ -136,6 +136,18 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertEqual(outside.read_bytes(), original)
         self.assertFalse((self.root / "setup.exe.orig-backup").exists())
 
+    def test_special_file_target_is_rejected_without_blocking_read(self) -> None:
+        target = self.root / "setup.exe"
+        os.mkfifo(target)
+
+        check = uaro.check_fcom(target)
+        result = uaro.apply_fcom(target)
+
+        self.assertEqual(check["result"], "blocked")
+        self.assertIn("not a regular file", check["reason"])
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("not a regular file", result["reason"])
+
     def test_symlink_backup_is_rejected_without_mutating_target_or_external_file(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
         target = self.target(original)
@@ -482,6 +494,35 @@ class FcomSpikeTests(unittest.TestCase):
                 uaro._publish_staged_target(staged, target, expected_identity, original)
 
         self.assertEqual(target.read_bytes()[0], 0xFF)
+        self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_atomic_publish_reverses_symlink_target_replacement(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        outside = self.root / "outside-target"
+        outside.write_bytes(original)
+        staged = self.root / ".setup.exe.staged"
+        staged.write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        expected_identity = (target.stat().st_dev, target.stat().st_ino)
+        real_exchange = uaro._rename_exchange
+        calls = 0
+
+        def replace_with_symlink_then_exchange(source: Path, destination: Path) -> None:
+            nonlocal calls
+            if calls == 0:
+                target.rename(self.root / "old-target-symlink")
+                target.symlink_to(outside)
+            calls += 1
+            real_exchange(source, destination)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=replace_with_symlink_then_exchange):
+            with self.assertRaisesRegex(RuntimeError, "TARGET_REPLACED"):
+                uaro._publish_staged_target(staged, target, expected_identity, original)
+
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.readlink(), outside)
+        self.assertEqual(outside.read_bytes(), original)
         self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
 
     def test_post_publish_error_reports_actual_patched_target(self) -> None:

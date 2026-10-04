@@ -82,6 +82,14 @@ def _read_and_classify(target: Path, operation: str) -> Tuple[Dict[str, object],
     if symlink_reason:
         return _blocked(result, symlink_reason), None
     try:
+        metadata = os.lstat(target)
+        if not stat.S_ISREG(metadata.st_mode):
+            return _blocked(result, "target is not a regular file"), None
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        return _blocked(result, f"cannot inspect target: {exc}"), None
+    try:
         data = target.read_bytes()
     except OSError as exc:
         result.update(
@@ -227,6 +235,12 @@ def _create_backup_from_snapshot(backup: Path, original: bytes) -> None:
 
 
 def _open_readonly_regular(path: Path) -> int:
+    try:
+        metadata = os.lstat(path)
+    except OSError as exc:
+        raise OSError(f"cannot inspect regular file: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError("path is not a regular file")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -302,23 +316,41 @@ def _publish_staged_target(
         except OSError:
             pass
         raise
+
+    def reverse_exchange(reason: str) -> None:
+        try:
+            _rename_exchange(temporary, target)
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(f"FCOM publish ambiguous; reverse exchange failed: {exc}") from exc
+        raise RuntimeError(reason)
+
+    try:
+        swapped_metadata = os.lstat(temporary)
+    except OSError as exc:
+        reverse_exchange(f"TARGET_REPLACED: cannot inspect displaced setup.exe: {exc}")
+    if not stat.S_ISREG(swapped_metadata.st_mode):
+        reverse_exchange("TARGET_REPLACED: displaced setup.exe is not a regular file")
+    if (swapped_metadata.st_dev, swapped_metadata.st_ino) != expected_identity:
+        reverse_exchange("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+
     old_target_fd: Optional[int] = None
     try:
         old_target_fd = _open_readonly_regular(temporary)
+        if _fd_identity(old_target_fd) != expected_identity:
+            reverse_exchange("TARGET_REPLACED: displaced setup.exe identity changed before read")
         old_target_bytes = _read_fd(old_target_fd)
+    except (OSError, RuntimeError) as exc:
+        reverse_exchange(f"TARGET_REPLACED: cannot read displaced setup.exe: {exc}")
     finally:
         if old_target_fd is not None:
             os.close(old_target_fd)
     if _path_identity(temporary) != expected_identity:
-        _rename_exchange(temporary, target)
-        raise RuntimeError("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+        reverse_exchange("TARGET_REPLACED: setup.exe identity changed during atomic publish")
     if old_target_bytes != expected_bytes:
-        _rename_exchange(temporary, target)
-        raise RuntimeError("TARGET_CHANGED: setup.exe bytes changed during atomic publish")
+        reverse_exchange("TARGET_CHANGED: setup.exe bytes changed during atomic publish")
     published_identity = _path_identity(target)
     if published_identity != staged_identity:
-        _rename_exchange(temporary, target)
-        raise RuntimeError("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
+        reverse_exchange("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
     temporary.unlink()
     return published_identity
 
@@ -407,6 +439,9 @@ def _record_current_target_state(result: Dict[str, object], target: Path) -> Non
 
     fd: Optional[int] = None
     try:
+        metadata = os.lstat(target)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("target is not a regular file")
         fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise RuntimeError("target is not a regular file")
@@ -436,6 +471,14 @@ def apply_fcom(
         symlink_reason = _symlink_path_reason(target)
         if symlink_reason:
             return _blocked(result, symlink_reason)
+        try:
+            metadata = os.lstat(target)
+            if not stat.S_ISREG(metadata.st_mode):
+                return _blocked(result, "target is not a regular file")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return _blocked(result, f"cannot inspect target: {exc}")
         try:
             read_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             if not stat.S_ISREG(os.fstat(read_fd).st_mode):
