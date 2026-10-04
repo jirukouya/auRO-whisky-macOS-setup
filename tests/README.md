@@ -28,10 +28,18 @@ the deterministic `uaro.py backup savedata` executor. The uaro-cli cases extract
 the embedded repair script, substitute only temporary fixture paths, and stub
 whisky, codesign, plutil, and Launch Services commands.
 
-FCOM fault-injection coverage also simulates a partial write after the target
-has been truncated. The production transaction restores the original snapshot
-when the target identity is unchanged and reports explicit rollback evidence;
-this remains a local target-recovery guarantee, not proof of a live installer.
+FCOM fault-injection coverage also simulates a partial write while staging the
+patched bytes. The production transaction leaves the existing target untouched
+when a handled staging failure occurs, removes its temporary sibling, and
+reports a blocked result; successful staging is atomically published and
+independently read back. This is a bounded local file-transaction guarantee,
+not proof of a live installer, crash durability, external-writer coordination
+outside the macOS exchange guard, or live rollback authority. A forced process
+stop or ambiguous publish failure may leave a temporary sibling for explicit
+manual cleanup.
+If a backup postcondition fails after publication, the result is blocked while
+the target may already be PATCHED; the caller must inspect the structured
+post-state before any retry.
 
 The verify-only and execution-gate checks are structural and static because
 SKILL.md is a Markdown playbook rather than an importable runtime module.
