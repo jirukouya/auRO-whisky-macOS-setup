@@ -118,6 +118,36 @@ class FcomSpikeTests(unittest.TestCase):
             b"\x00" * (uaro.SITE_B_OFFSET + 2), "TRUNCATED"
         )
 
+    def test_symlink_target_is_rejected_without_touching_outside_file(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        outside = self.root / "outside.exe"
+        outside.write_bytes(original)
+        target = self.root / "setup.exe"
+        target.symlink_to(outside)
+
+        check = uaro.check_fcom(target)
+        self.assertEqual(check["result"], "blocked")
+        self.assertIn("symlink path component is unsupported", check["reason"])
+        result = uaro.apply_fcom(target)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("symlink path component is unsupported", result["reason"])
+        self.assertEqual(outside.read_bytes(), original)
+        self.assertFalse((self.root / "setup.exe.orig-backup").exists())
+
+    def test_symlink_backup_is_rejected_without_mutating_target_or_external_file(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        outside_backup = self.root / "outside-backup"
+        outside_backup.write_bytes(original)
+        backup = self.backup_for(target)
+        backup.symlink_to(outside_backup)
+
+        result = uaro.apply_fcom(target)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("symlink path component is unsupported", result["reason"])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(outside_backup.read_bytes(), original)
+
     def test_valid_unpatched_apply_creates_exact_backup_and_exact_diff(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
         target = self.target(original)

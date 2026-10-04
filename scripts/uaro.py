@@ -72,6 +72,9 @@ def _target_record(target: Path, operation: str) -> Dict[str, object]:
 
 def _read_and_classify(target: Path, operation: str) -> Tuple[Dict[str, object], Optional[bytes]]:
     result = _target_record(target, operation)
+    symlink_reason = _symlink_path_reason(target)
+    if symlink_reason:
+        return _blocked(result, symlink_reason), None
     try:
         data = target.read_bytes()
     except OSError as exc:
@@ -143,8 +146,27 @@ def _fd_identity(fd: int) -> Tuple[int, int]:
 
 
 def _path_identity(target: Path) -> Tuple[int, int]:
-    metadata = target.stat()
+    metadata = os.lstat(target)
     return metadata.st_dev, metadata.st_ino
+
+
+def _symlink_path_reason(target: Path) -> Optional[str]:
+    """Reject a symlink at the explicit mutation target itself.
+
+    Parent paths may include platform aliases such as macOS's ``/var`` link;
+    the target is protected independently by ``O_NOFOLLOW`` and lstat-based
+    identity checks so a replacement race cannot redirect the write.
+    """
+
+    try:
+        metadata = os.lstat(target)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return f"cannot inspect target path: {exc}"
+    if stat.S_ISLNK(metadata.st_mode):
+        return f"symlink path component is unsupported: {target}"
+    return None
 
 
 def _read_fd(fd: int) -> bytes:
@@ -182,15 +204,16 @@ def _create_backup_from_snapshot(backup: Path, original: bytes) -> None:
 
 
 def _open_writable_target(target: Path, expected_identity: Tuple[int, int]) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(target, os.O_RDWR)
+        fd = os.open(target, os.O_RDWR | nofollow)
     except OSError:
         try:
             metadata = target.stat()
             if (metadata.st_dev, metadata.st_ino) != expected_identity:
                 raise RuntimeError("TARGET_REPLACED: setup.exe identity changed before write access")
             os.chmod(target, metadata.st_mode | stat.S_IWUSR)
-            fd = os.open(target, os.O_RDWR)
+            fd = os.open(target, os.O_RDWR | nofollow)
         except RuntimeError:
             raise
         except OSError as exc:
@@ -231,8 +254,11 @@ def apply_fcom(
     read_fd: Optional[int] = None
     write_fd: Optional[int] = None
     try:
+        symlink_reason = _symlink_path_reason(target)
+        if symlink_reason:
+            return _blocked(result, symlink_reason)
         try:
-            read_fd = os.open(target, os.O_RDONLY)
+            read_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             expected_identity = _fd_identity(read_fd)
             original = _read_fd(read_fd)
             if _path_identity(target) != expected_identity:
@@ -271,6 +297,9 @@ def apply_fcom(
             return _blocked(result, f"FCOM state {state} is not patchable")
 
         backup = target.with_name(target.name + ".orig-backup")
+        backup_symlink_reason = _symlink_path_reason(backup)
+        if backup_symlink_reason:
+            return _blocked(result, backup_symlink_reason)
         try:
             if backup.exists():
                 backup_bytes = backup.read_bytes()
