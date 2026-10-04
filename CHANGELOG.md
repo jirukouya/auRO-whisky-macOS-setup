@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 ### Added
+- Added an explicit-path, read-only `uaro.py doctor` route that aggregates
+  structural FCOM, launcher, savedata, and optional Settings runtime evidence
+  without discovery, repair, launch, download, signing, or deletion. Live
+  execution, behavior, and patch freshness remain explicitly unconfirmed; its
+  Settings runtime check does not execute the manifest interpreter.
 - Added an artifact-specific Whisky 2.3.5 source policy and SHA-256 download verifier.
   Official and project fallback archives must match the digest anchored by the
   immutable Homebrew cask revision `87180be1e381499a994990a044944580d180be44`

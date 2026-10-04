@@ -628,6 +628,20 @@ Known states:
 
 The expected pair is classified only after both sites are read. `UNKNOWN`, `MIXED`, and `TRUNCATED` are fail-closed states. A read-only check never creates a backup and never writes `setup.exe`.
 
+For a concise structural snapshot of an existing install, use the repository's
+explicit-path doctor before following the longer verify-only blocks:
+
+```bash
+python3 scripts/uaro.py doctor --game-dir "$GAME_DIR"
+```
+
+Add `--apps-dir` and `--settings-runtime-dir` only when those paths have been
+resolved explicitly. The doctor reports structural/local-artifact evidence
+only; its Settings runtime check is static-only and does not execute the
+manifest interpreter. It never discovers paths, launches Wine, repairs,
+downloads, signs, or deletes, and it leaves execution, behavior, and patch
+freshness unconfirmed.
+
 ### Shared deterministic read-only executor routing
 
 The read-only FCOM and structural-inspection blocks below must be run in the same shell invocation as this helper block so the functions are available. Set `AURO_REPO_ROOT` to this checkout when the current working directory is elsewhere; when it is unset, the current directory is used only if Git can resolve it to the expected repository. The helper validates the Git root, the expected `origin`, and the readable executor file. A missing or different origin is `BLOCKED`; never guess another checkout. No private absolute path is embedded.
