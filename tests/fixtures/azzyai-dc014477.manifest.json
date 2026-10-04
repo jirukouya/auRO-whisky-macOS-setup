@@ -1,0 +1,161 @@
+{
+  "artifact": "AzzyAI USER_AI tree review manifest",
+  "commit": "dc0144773286d52ca5f86d774abaf3d445bc7c7b",
+  "content_scope": "USER_AI",
+  "entries": [
+    {
+      "kind": "file",
+      "path": "AI.lua",
+      "sha256": "0758fb3d9421b399213f258be05191d75a71014d84f3aece7c72e449c5f04517",
+      "size": 4113
+    },
+    {
+      "kind": "file",
+      "path": "AI_M.lua",
+      "sha256": "636fe6190be55ab9415e837de0726ac73acae8115d4a0586d5c95a3d970c4a1d",
+      "size": 4472
+    },
+    {
+      "kind": "file",
+      "path": "AI_main.lua",
+      "sha256": "8bc2186cd7ea6cdddb8bff5ab939710bec6d09e46327ec856eaeb7db65676a94",
+      "size": 130282
+    },
+    {
+      "kind": "file",
+      "path": "A_Friends.lua",
+      "sha256": "31fed2ed54238fc13a0a6947ce75d591db42c621a950cfe756a6a1a2989fb096",
+      "size": 695
+    },
+    {
+      "kind": "file",
+      "path": "AzzyAIConfig.exe",
+      "sha256": "1d9ee3aac24b74556d789aa7cf6ad9871b1ae4f2e5da0904837ac32e48970032",
+      "size": 394752
+    },
+    {
+      "kind": "file",
+      "path": "AzzyUtil.lua",
+      "sha256": "28f0809b008c9c867dd7a1f0aa0eab556abe6ecd51be9b068902ead4bfb39f07",
+      "size": 69481
+    },
+    {
+      "kind": "file",
+      "path": "Const_.lua",
+      "sha256": "96fc4546c2174705ee757533dddaddd9887ae9d5a2e2955900b296620c9ad5e3",
+      "size": 12409
+    },
+    {
+      "kind": "file",
+      "path": "Defaults.lua",
+      "sha256": "d2edc79cf566a77925f489eaf4bdb398fe9e5e17a772bcc9953ed26827b08481",
+      "size": 5694
+    },
+    {
+      "kind": "file",
+      "path": "Documentation.pdf",
+      "sha256": "999f05e502c5b7dceb89fc46c0d31966604e12a6c7e3eaabf2b1c5452f252c37",
+      "size": 382786
+    },
+    {
+      "kind": "file",
+      "path": "H_Avoid.lua",
+      "sha256": "b75d1729b07de7b3bfdf980a75beeb77c3b8f8a88a4e218ed44acfcf05201d6b",
+      "size": 1607
+    },
+    {
+      "kind": "file",
+      "path": "H_Config.lua",
+      "sha256": "4ccd7c86f9c075ddbb937c2eff841e035c6578f21bb63838a094c0e972a7e4d7",
+      "size": 4006
+    },
+    {
+      "kind": "file",
+      "path": "H_Extra.lua",
+      "sha256": "ee35efd47a7746dd427931d04c5214801af75113779c66b56e60ef75bbc7fd47",
+      "size": 2230
+    },
+    {
+      "kind": "file",
+      "path": "H_PVP_Tact.lua",
+      "sha256": "506e1e6e9d34dd4afef8fa766a7769ad1ead31db703ed0719eb90588a944ea75",
+      "size": 821
+    },
+    {
+      "kind": "file",
+      "path": "H_SkillList.lua",
+      "sha256": "254c97a72d7db2d16668148bd84e5aabd08581af1d89536807e80075b967f9a6",
+      "size": 10915
+    },
+    {
+      "kind": "file",
+      "path": "H_Tactics.lua",
+      "sha256": "bd4d2b3bdf74da1e8d627e5788eb1ec7784e21c6086a2be47da3347a6dc4e53b",
+      "size": 5349
+    },
+    {
+      "kind": "file",
+      "path": "M_Config.lua",
+      "sha256": "9e4d1ed768d1b73d3ea5c54fa9dc95394fce63fa66f03b8dc7f2fcc992c2a4fe",
+      "size": 2989
+    },
+    {
+      "kind": "file",
+      "path": "M_Extra.lua",
+      "sha256": "e016fa3408c17cf386c538e60c35f2c86991532e70a8afb5f1a566d5ef4de440",
+      "size": 1532
+    },
+    {
+      "kind": "file",
+      "path": "M_PVP_Tact.lua",
+      "sha256": "c9e7e0ab705680fe32f0d91019cc5c12158477a8013960ca1a9233e744f5883c",
+      "size": 818
+    },
+    {
+      "kind": "file",
+      "path": "M_SkillList.lua",
+      "sha256": "0fae5505c3340029b8566c43488038c0166874e37edcf0533e2a5dcaf1494423",
+      "size": 12014
+    },
+    {
+      "kind": "file",
+      "path": "M_Tactics.lua",
+      "sha256": "b5270eb49b79fd090c687d817ffecf2bf404701f18a808d4f1e7acac5d6bdcdf",
+      "size": 543
+    },
+    {
+      "kind": "file",
+      "path": "Mob_ID.lua",
+      "sha256": "fb7fc499178ebb4ed4a8661f94b54fa4bee841e74000015f8b69e9ab74c7b0d1",
+      "size": 9
+    },
+    {
+      "kind": "file",
+      "path": "Stubs.lua",
+      "sha256": "538cd1de2cc6884ee48bd1fbdc4dbb2324cb1b4012ed55c264c046e5bb7a39cb",
+      "size": 1297
+    },
+    {
+      "kind": "directory",
+      "path": "data",
+      "sha256": "",
+      "size": 0
+    },
+    {
+      "kind": "file",
+      "path": "data/dummy.txt",
+      "sha256": "45ec4c06cdb9494d92a05787ea68b38156737623e0861a15e335179c490a9828",
+      "size": 176
+    },
+    {
+      "kind": "file",
+      "path": "twRO.lua",
+      "sha256": "f062d9bebc87160433b8dba1bfcccfb341eab787e7b28a250a1a4210dfeca055",
+      "size": 2555
+    }
+  ],
+  "manifest_kind": "reviewed-upstream-metadata",
+  "repository": "https://github.com/SpenceKonde/AzzyAI",
+  "schema_version": 1,
+  "tree_identity": "4f03fdabac5afa30bbe17580e6466586d94d0ba071551f8eaebecbd2716a3eda"
+}

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 import json
 from pathlib import Path
@@ -16,9 +16,49 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AZZYAI_FIXTURE = ROOT / "tests" / "fixtures" / "azzyai-dc014477" / "USER_AI"
+SYNTHETIC_FIXTURE = ROOT / "tests" / "fixtures" / "azzyai-synthetic" / "USER_AI"
+REVIEW_MANIFEST = ROOT / "tests" / "fixtures" / "azzyai-dc014477.manifest.json"
+SYNTHETIC_MANIFEST = ROOT / "tests" / "fixtures" / "azzyai-synthetic.manifest.json"
+CANONICAL_REPOSITORY = "https://github.com/SpenceKonde/AzzyAI"
+CANONICAL_COMMIT = "dc0144773286d52ca5f86d774abaf3d445bc7c7b"
+CANONICAL_SCOPE = "USER_AI"
+CANONICAL_TREE_IDENTITY = "4f03fdabac5afa30bbe17580e6466586d94d0ba071551f8eaebecbd2716a3eda"
 sys.path.insert(0, str(ROOT / "scripts"))
 import azzyai  # noqa: E402
+
+
+def load_manifest(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text())
+
+
+def manifest_identity(manifest: dict[str, object]) -> str:
+    records: dict[str, azzyai.TreeEntry] = {}
+    for raw_entry in manifest["entries"]:  # type: ignore[index]
+        entry = raw_entry  # type: ignore[assignment]
+        relative = entry["path"]
+        if relative in records:
+            raise AssertionError(f"duplicate manifest path: {relative}")
+        records[relative] = (entry["kind"], entry["size"], entry["sha256"])
+    return azzyai._tree_identity(records)
+
+
+SYNTHETIC_MANIFEST_DATA = load_manifest(SYNTHETIC_MANIFEST)
+SYNTHETIC_POLICY = azzyai.AzzyAiSourcePolicy(
+    repository=CANONICAL_REPOSITORY,
+    commit="a" * 40,
+    content_scope="USER_AI",
+    expected_tree_sha256=SYNTHETIC_MANIFEST_DATA["tree_identity"],  # type: ignore[arg-type]
+)
+
+
+@contextmanager
+def bind_test_policy(policy: azzyai.AzzyAiSourcePolicy):
+    original = azzyai.AUTHORIZED_AZZYAI_SOURCE
+    azzyai.AUTHORIZED_AZZYAI_SOURCE = policy
+    try:
+        yield
+    finally:
+        azzyai.AUTHORIZED_AZZYAI_SOURCE = original
 
 
 def tree_bytes(root: Path) -> dict[str, object]:
@@ -434,30 +474,27 @@ class AzzyAiReplacementTests(unittest.TestCase):
 
     def test_cli_emits_structured_success(self) -> None:
         staged = self.root / "staged"
-        shutil.copytree(AZZYAI_FIXTURE, staged)
+        shutil.copytree(SYNTHETIC_FIXTURE, staged)
         destination = self.tree("USER_AI", {"AI.lua": b"old"})
-        process = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts" / "azzyai.py"),
-                "replace",
-                "--source",
-                str(staged),
-                "--source-repository",
-                azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
-                "--source-commit",
-                azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
-                "--destination",
-                str(destination),
-                "--backup",
-                str(self.root / "backup"),
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(process.returncode, 0, process.stderr)
-        payload = json.loads(process.stdout)
+        output = StringIO()
+        with bind_test_policy(SYNTHETIC_POLICY), redirect_stdout(output):
+            return_code = azzyai.main(
+                [
+                    "replace",
+                    "--source",
+                    str(staged),
+                    "--source-repository",
+                    SYNTHETIC_POLICY.repository,
+                    "--source-commit",
+                    SYNTHETIC_POLICY.commit,
+                    "--destination",
+                    str(destination),
+                    "--backup",
+                    str(self.root / "backup"),
+                ]
+            )
+        self.assertEqual(return_code, 0)
+        payload = json.loads(output.getvalue())
         self.assertTrue(payload["replacement_verified"])
         self.assertTrue(payload["authorization"]["backup_verified"])
         self.assertTrue(payload["authorization"]["source_identity_verified"])
@@ -539,18 +576,19 @@ class AzzyAiSourceVerificationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def source(self) -> Path:
-        path = self.root / "USER_AI"
-        shutil.copytree(AZZYAI_FIXTURE, path)
+    def source(self, name: str = "USER_AI") -> Path:
+        path = self.root / name
+        shutil.copytree(SYNTHETIC_FIXTURE, path)
         return path
 
     def verify(self, source: Path, **kwargs: object) -> dict[str, object]:
         values = {
-            "observed_repository": azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
-            "observed_commit": azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
+            "observed_repository": SYNTHETIC_POLICY.repository,
+            "observed_commit": SYNTHETIC_POLICY.commit,
         }
         values.update(kwargs)
-        return azzyai.verify_azzyai_source(source, **values)  # type: ignore[arg-type]
+        with bind_test_policy(SYNTHETIC_POLICY):
+            return azzyai.verify_azzyai_source(source, **values)  # type: ignore[arg-type]
 
     def test_exact_authorized_source_passes(self) -> None:
         result = self.verify(self.source())
@@ -560,7 +598,7 @@ class AzzyAiSourceVerificationTests(unittest.TestCase):
         self.assertTrue(result["content_verified"])
         self.assertEqual(
             result["observed_tree_identity"],
-            azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+            SYNTHETIC_POLICY.expected_tree_sha256,
         )
         self.assertEqual(result["signature_status"], "not-verified")
 
@@ -583,6 +621,25 @@ class AzzyAiSourceVerificationTests(unittest.TestCase):
         self.assertFalse(result["identity_verified"])
         self.assertFalse(result["content_verified"])
 
+    def test_missing_binary_or_documentation_blocks(self) -> None:
+        for relative in ("AzzyAIConfig.exe", "Documentation.pdf"):
+            with self.subTest(relative=relative):
+                source = self.source(relative.replace(".", "-"))
+                (source / relative).unlink()
+                result = self.verify(source)
+                self.assertEqual(result["result"], "blocked")
+                self.assertFalse(result["identity_verified"])
+
+    def test_binary_or_documentation_mutation_blocks(self) -> None:
+        for relative in ("AzzyAIConfig.exe", "Documentation.pdf"):
+            with self.subTest(relative=relative):
+                source = self.source(relative.replace(".", "-"))
+                path = source / relative
+                path.write_bytes(path.read_bytes() + b"tampered")
+                result = self.verify(source)
+                self.assertEqual(result["result"], "blocked")
+                self.assertFalse(result["identity_verified"])
+
     def test_unexpected_file_blocks_exact_tree(self) -> None:
         source = self.source()
         (source / "unexpected.lua").write_bytes(b"unexpected")
@@ -598,21 +655,17 @@ class AzzyAiSourceVerificationTests(unittest.TestCase):
     def test_malformed_policy_blocks_without_recomputing_authority(self) -> None:
         source = self.source()
         malformed = azzyai.AzzyAiSourcePolicy(
-            repository=azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
+            repository=SYNTHETIC_POLICY.repository,
             commit="master",
             content_scope="USER_AI",
-            expected_tree_sha256=azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+            expected_tree_sha256=SYNTHETIC_POLICY.expected_tree_sha256,
         )
-        original = azzyai.AUTHORIZED_AZZYAI_SOURCE
-        azzyai.AUTHORIZED_AZZYAI_SOURCE = malformed
-        try:
+        with bind_test_policy(malformed):
             result = azzyai.verify_azzyai_source(
                 source,
-                observed_repository=original.repository,
-                observed_commit=original.commit,
+                observed_repository=SYNTHETIC_POLICY.repository,
+                observed_commit=SYNTHETIC_POLICY.commit,
             )
-        finally:
-            azzyai.AUTHORIZED_AZZYAI_SOURCE = original
         self.assertEqual(result["result"], "blocked")
         self.assertFalse(result["source_claim_verified"])
         self.assertIn("policy is malformed", result["reason"])
@@ -637,40 +690,89 @@ class AzzyAiSourceVerificationTests(unittest.TestCase):
         result = self.verify(source)
         self.assertEqual(
             result["expected_tree_identity"],
-            azzyai.AUTHORIZED_AZZYAI_SOURCE.expected_tree_sha256,
+            SYNTHETIC_POLICY.expected_tree_sha256,
         )
         with self.assertRaises(TypeError):
-            azzyai.verify_azzyai_source(  # type: ignore[call-arg]
-                source,
-                observed_repository=azzyai.AUTHORIZED_AZZYAI_SOURCE.repository,
-                observed_commit=azzyai.AUTHORIZED_AZZYAI_SOURCE.commit,
-                expected_tree_sha256="0" * 64,
-            )
+            with bind_test_policy(SYNTHETIC_POLICY):
+                azzyai.verify_azzyai_source(  # type: ignore[call-arg]
+                    source,
+                    observed_repository=SYNTHETIC_POLICY.repository,
+                    observed_commit=SYNTHETIC_POLICY.commit,
+                    expected_tree_sha256="0" * 64,
+                )
 
     def test_pinned_commit_remains_selected_when_master_changes(self) -> None:
         source = self.source()
         (source / "AI.lua").write_bytes(b"future-master-change")
         result = self.verify(source)
-        self.assertEqual(result["authorized_commit"], azzyai.AUTHORIZED_AZZYAI_SOURCE.commit)
+        self.assertEqual(result["authorized_commit"], SYNTHETIC_POLICY.commit)
         self.assertEqual(result["result"], "blocked")
 
     def test_source_swap_after_preflight_blocks_production_authorization(self) -> None:
         source = self.source()
-        preflight = self.verify(source)
-        self.assertEqual(preflight["result"], "success")
-        (source / "AI.lua").write_bytes(b"attacker-controlled source")
-        destination = self.root / "destination"
-        destination.mkdir()
-        (destination / "AI.lua").write_bytes(b"old")
-        result, token = azzyai.authorize_user_ai_replacement(
-            source,
-            destination,
-            self.root / "backup",
-            require_source_identity=True,
-        )
+        with bind_test_policy(SYNTHETIC_POLICY):
+            preflight = azzyai.verify_azzyai_source(
+                source,
+                observed_repository=SYNTHETIC_POLICY.repository,
+                observed_commit=SYNTHETIC_POLICY.commit,
+            )
+            self.assertEqual(preflight["result"], "success")
+            (source / "AI.lua").write_bytes(b"attacker-controlled source")
+            destination = self.root / "destination"
+            destination.mkdir()
+            (destination / "AI.lua").write_bytes(b"old")
+            result, token = azzyai.authorize_user_ai_replacement(
+                source,
+                destination,
+                self.root / "backup",
+                require_source_identity=True,
+            )
         self.assertIsNone(token)
         self.assertEqual(result["result"], "blocked")
         self.assertIn("does not match reviewed commit content", result["reason"])
+
+    def test_reviewed_manifest_matches_canonical_policy(self) -> None:
+        manifest = load_manifest(REVIEW_MANIFEST)
+        policy = azzyai.AUTHORIZED_AZZYAI_SOURCE
+        self.assertEqual(policy.repository, CANONICAL_REPOSITORY)
+        self.assertEqual(policy.commit, CANONICAL_COMMIT)
+        self.assertEqual(policy.content_scope, CANONICAL_SCOPE)
+        self.assertEqual(policy.expected_tree_sha256, CANONICAL_TREE_IDENTITY)
+        self.assertEqual(manifest["repository"], CANONICAL_REPOSITORY)
+        self.assertEqual(manifest["commit"], CANONICAL_COMMIT)
+        self.assertEqual(manifest["content_scope"], CANONICAL_SCOPE)
+        self.assertEqual(manifest_identity(manifest), CANONICAL_TREE_IDENTITY)
+        self.assertEqual(manifest["tree_identity"], CANONICAL_TREE_IDENTITY)
+        entries = manifest["entries"]  # type: ignore[assignment]
+        self.assertEqual([entry["path"] for entry in entries], sorted(entry["path"] for entry in entries))
+        self.assertTrue(all(set(entry) == {"kind", "path", "size", "sha256"} for entry in entries))
+
+    def test_synthetic_manifest_matches_fixture(self) -> None:
+        manifest = load_manifest(SYNTHETIC_MANIFEST)
+        self.assertEqual(manifest_identity(manifest), manifest["tree_identity"])
+        self.assertEqual(azzyai.source_tree_digest(SYNTHETIC_FIXTURE), manifest["tree_identity"])
+
+    def test_external_cli_exposes_only_canonical_policy(self) -> None:
+        process = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "azzyai.py"), "source-policy"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        payload = json.loads(process.stdout)
+        policy = azzyai.AUTHORIZED_AZZYAI_SOURCE
+        self.assertEqual(payload["repository"], policy.repository)
+        self.assertEqual(payload["commit"], policy.commit)
+        self.assertEqual(payload["content_scope"], policy.content_scope)
+        self.assertEqual(payload["expected_tree_sha256"], policy.expected_tree_sha256)
+
+
+class ReleaseHygieneTests(unittest.TestCase):
+    def test_verbatim_upstream_fixture_is_not_tracked(self) -> None:
+        legacy_fixture = ROOT / "tests" / "fixtures" / "azzyai-dc014477" / "USER_AI"
+        self.assertFalse(legacy_fixture.exists())
+        self.assertTrue(REVIEW_MANIFEST.is_file())
 
 
 if __name__ == "__main__":

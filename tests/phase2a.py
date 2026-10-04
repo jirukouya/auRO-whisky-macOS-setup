@@ -1168,8 +1168,11 @@ def test_scope() -> None:
         "tests/test_settings_runtime.py",
         "tests/test_whisky.py",
         "tests/test_uaro.py",
+        "tests/fixtures/azzyai-dc014477.manifest.json",
+        "tests/fixtures/azzyai-synthetic.manifest.json",
     }
-    allowed_fixture_prefixes = ("tests/fixtures/azzyai-dc014477/",)
+    allowed_fixture_prefixes = ("tests/fixtures/azzyai-synthetic/",)
+    deleted_legacy_fixture_prefix = "tests/fixtures/azzyai-dc014477/"
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
@@ -1178,7 +1181,9 @@ def test_scope() -> None:
         check=True,
     )
     paths = set()
+    deleted_legacy_paths = set()
     for line in proc.stdout.splitlines():
+        status = line[:2]
         value = line[3:]
         if " -> " in value:
             value = value.split(" -> ", 1)[1]
@@ -1186,10 +1191,13 @@ def test_scope() -> None:
         if "/__pycache__/" in f"/{value}" or value.endswith(".pyc"):
             continue
         paths.add(value)
+        if value.startswith(deleted_legacy_fixture_prefix) and "D" in status:
+            deleted_legacy_paths.add(value)
     unexpected = {
         path
         for path in paths
         if path not in allowed
+        and path not in deleted_legacy_paths
         and not any(path.startswith(prefix) for prefix in allowed_fixture_prefixes)
     }
     require(not unexpected, f"unexpected changed paths: {sorted(unexpected)}")
