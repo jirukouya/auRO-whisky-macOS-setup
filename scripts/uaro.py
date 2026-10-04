@@ -385,6 +385,10 @@ def _backup_postcondition_error(
             return "BACKUP_REPLACED: original backup identity changed during mutation"
         if _read_fd(fd) != expected_bytes:
             return "BACKUP_CHANGED: original backup bytes changed during mutation"
+        if _fd_identity(fd) != expected_identity or _path_identity(backup) != expected_identity:
+            return "BACKUP_REPLACED: original backup identity changed during mutation"
+        if _read_fd(fd) != expected_bytes:
+            return "BACKUP_CHANGED: original backup bytes changed during mutation"
     except OSError as exc:
         return f"BACKUP_CHANGED: cannot verify original backup after mutation: {exc}"
     return None
@@ -571,6 +575,11 @@ def apply_fcom(
         if backup_error:
             result["backup_status"] = "blocked"
             return _blocked(result, backup_error)
+        try:
+            if _path_identity(target) != published_identity:
+                return _blocked(result, "TARGET_REPLACED: setup.exe identity changed before success")
+        except OSError as exc:
+            return _blocked(result, f"TARGET_CHANGED: cannot verify setup.exe before success: {exc}")
 
         result.update(
             {

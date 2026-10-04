@@ -561,6 +561,34 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], uaro.A_PATCHED)
         self.assertEqual((self.root / "moved-original-backup").read_bytes(), original)
 
+    def test_backup_replacement_during_postcondition_read_is_blocked(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        backup.write_bytes(original)
+        backup_fd = os.open(backup, os.O_RDONLY)
+        backup_identity = (os.fstat(backup_fd).st_dev, os.fstat(backup_fd).st_ino)
+        real_read = uaro._read_fd
+        calls = 0
+
+        def read_then_replace(fd: int) -> bytes:
+            nonlocal calls
+            data = real_read(fd)
+            if fd == backup_fd and calls == 0:
+                calls += 1
+                backup.rename(self.root / "moved-postcondition-backup")
+                backup.write_bytes(original[:1] + b"\xff" + original[2:])
+            return data
+
+        try:
+            with mock.patch.object(uaro, "_read_fd", side_effect=read_then_replace):
+                error = uaro._backup_postcondition_error(backup, backup_fd, backup_identity, original)
+        finally:
+            os.close(backup_fd)
+
+        self.assertIsNotNone(error)
+        self.assertIn("BACKUP_REPLACED", error)
+
     def test_cli_check_emits_json_and_apply_has_stable_exit(self) -> None:
         target = self.target(fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED))
         check = subprocess.run(
