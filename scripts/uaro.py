@@ -270,13 +270,38 @@ def _publish_staged_target(
     target: Path,
     expected_identity: Tuple[int, int],
     expected_bytes: bytes,
+    expected_staged_identity: Optional[Tuple[int, int]] = None,
 ) -> Tuple[int, int]:
     """Publish a staged target and reject a macOS path-replacement race."""
 
+    if _symlink_path_reason(temporary):
+        raise RuntimeError("STAGED_REPLACED: staged FCOM path became a symlink")
+    staged_identity = _path_identity(temporary)
+    if expected_staged_identity is not None and staged_identity != expected_staged_identity:
+        raise RuntimeError("STAGED_REPLACED: staged FCOM bytes were replaced before publish")
     if sys.platform != "darwin":
-        os.replace(temporary, target)
-        return _path_identity(target)
-    _rename_exchange(temporary, target)
+        try:
+            os.replace(temporary, target)
+        except OSError:
+            try:
+                if _path_identity(temporary) == staged_identity:
+                    temporary.unlink()
+            except OSError:
+                pass
+            raise
+        published_identity = _path_identity(target)
+        if published_identity != staged_identity:
+            raise RuntimeError("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
+        return published_identity
+    try:
+        _rename_exchange(temporary, target)
+    except (OSError, RuntimeError):
+        try:
+            if _path_identity(temporary) == staged_identity:
+                temporary.unlink()
+        except OSError:
+            pass
+        raise
     old_target_fd: Optional[int] = None
     try:
         old_target_fd = _open_readonly_regular(temporary)
@@ -291,6 +316,9 @@ def _publish_staged_target(
         _rename_exchange(temporary, target)
         raise RuntimeError("TARGET_CHANGED: setup.exe bytes changed during atomic publish")
     published_identity = _path_identity(target)
+    if published_identity != staged_identity:
+        _rename_exchange(temporary, target)
+        raise RuntimeError("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
     temporary.unlink()
     return published_identity
 
@@ -318,6 +346,7 @@ def _write_atomic_fcom_target(
             temporary = Path(stream.name)
             _write_fd(stream.fileno(), patched)
             os.fchmod(stream.fileno(), mode)
+        staged_identity = _path_identity(temporary)
         reason = _precondition_error(target, read_fd, expected_identity, original)
         if reason:
             raise RuntimeError(reason)
@@ -325,7 +354,7 @@ def _write_atomic_fcom_target(
             raise RuntimeError("TARGET_LINKED: hard-linked setup.exe is unsupported for atomic replacement")
         try:
             published_identity = _publish_staged_target(
-                temporary, target, expected_identity, original
+                temporary, target, expected_identity, original, staged_identity
             )
         except (OSError, RuntimeError):
             # After exchange/rename has started, the path may no longer contain

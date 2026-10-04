@@ -401,6 +401,20 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob(".setup.exe.*")), [])
         self.assertEqual(uaro.check_fcom(target)["state"], "UNPATCHED")
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_publish_failure_before_exchange_cleans_temporary_file(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=OSError("exchange unavailable")):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["mutation"])
+        self.assertEqual(result["post_state"], "UNPATCHED")
+        self.assertEqual(list(self.root.glob(".setup.exe.*")), [])
+        self.assertEqual(target.read_bytes(), original)
+
     def test_hard_linked_target_is_rejected_before_publish(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
         target = self.target(original)
@@ -475,8 +489,14 @@ class FcomSpikeTests(unittest.TestCase):
         target = self.target(original)
         real_publish = uaro._publish_staged_target
 
-        def publish_then_raise(staged: Path, destination: Path, identity: tuple[int, int], expected: bytes) -> None:
-            real_publish(staged, destination, identity, expected)
+        def publish_then_raise(
+            staged: Path,
+            destination: Path,
+            identity: tuple[int, int],
+            expected: bytes,
+            staged_identity: tuple[int, int],
+        ) -> None:
+            real_publish(staged, destination, identity, expected, staged_identity)
             raise OSError("injected post-publish error")
 
         with mock.patch.object(uaro, "_publish_staged_target", side_effect=publish_then_raise):
@@ -497,9 +517,13 @@ class FcomSpikeTests(unittest.TestCase):
         real_publish = uaro._publish_staged_target
 
         def publish_then_replace(
-            staged: Path, destination: Path, identity: tuple[int, int], expected: bytes
+            staged: Path,
+            destination: Path,
+            identity: tuple[int, int],
+            expected: bytes,
+            staged_identity: tuple[int, int],
         ) -> tuple[int, int]:
-            published_identity = real_publish(staged, destination, identity, expected)
+            published_identity = real_publish(staged, destination, identity, expected, staged_identity)
             destination.rename(self.root / "published-target")
             replacement_path.rename(destination)
             return published_identity
