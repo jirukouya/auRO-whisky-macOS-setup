@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -354,6 +355,34 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertFalse(result["mutation"])
         self.assertNotEqual(result["verification"], "passed")
         self.assertEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], b"\x00")
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_partial_write_failure_restores_original_target(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        real_write = uaro._write_fd
+        calls = 0
+
+        def fail_after_partial_write(fd: int, data: bytes) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                os.lseek(fd, 0, os.SEEK_SET)
+                os.ftruncate(fd, 0)
+                os.write(fd, data[:128])
+                os.fsync(fd)
+                raise OSError("injected partial write failure")
+            real_write(fd, data)
+
+        with mock.patch.object(uaro, "_write_fd", side_effect=fail_after_partial_write):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["mutation"])
+        self.assertEqual(result["rollback"], "passed")
+        self.assertEqual(result["verification"], "rollback-passed")
+        self.assertEqual(target.read_bytes(), original)
         self.assertEqual(backup.read_bytes(), original)
 
     def test_cli_check_emits_json_and_apply_has_stable_exit(self) -> None:

@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 ### Added
+- Added bounded FCOM write-failure recovery: when the approved `setup.exe`
+  transaction fails during its own write and the target identity is unchanged,
+  the executor restores the original snapshot and reports rollback evidence.
+  This does not grant live rollback authority or change successful patch
+  semantics.
 - Added a minimal macOS GitHub Actions verification workflow for pull requests
   and pushes to `main`. It runs the repository-native unit suite
   (including Whisky and AzzyAI), Phase 2A, Python compilation, and whitespace

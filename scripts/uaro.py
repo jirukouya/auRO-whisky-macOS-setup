@@ -66,6 +66,7 @@ def _target_record(target: Path, operation: str) -> Dict[str, object]:
         "backup": str(target.with_name(target.name + ".orig-backup")),
         "mutation": False,
         "backup_created": False,
+        "rollback": "not-run",
         "verification": "not-run",
     }
 
@@ -266,6 +267,33 @@ def _write_fd(fd: int, data: bytes) -> None:
     os.fsync(fd)
 
 
+def _rollback_fcom_write(
+    fd: int,
+    target: Path,
+    expected_identity: Tuple[int, int],
+    original: bytes,
+) -> Optional[str]:
+    """Restore a target after a write failure known to be local to this transaction.
+
+    The caller only invokes this after ``_write_fd`` raised.  Identity is checked
+    before restoring so a replacement made by another actor is never overwritten.
+    The restore itself is fsynced and read back before it is reported as passed.
+    """
+
+    try:
+        if _fd_identity(fd) != expected_identity or _path_identity(target) != expected_identity:
+            return "rollback blocked: setup.exe identity changed after write failure"
+        _write_fd(fd, original)
+        restored = _read_fd(fd)
+        if restored != original:
+            return "rollback blocked: restored bytes did not match the original snapshot"
+        if _fd_identity(fd) != expected_identity or _path_identity(target) != expected_identity:
+            return "rollback blocked: setup.exe identity changed during restore"
+    except (OSError, RuntimeError) as exc:
+        return f"rollback blocked: {exc}"
+    return None
+
+
 def apply_fcom(
     target_path: str | Path,
     before_mutation_hook: Optional[Callable[[], None]] = None,
@@ -387,7 +415,17 @@ def apply_fcom(
             final = _read_fd(write_fd)
         except OSError as exc:
             result["mutation"] = True
-            return _blocked(result, f"FCOM patch write/read-back failed: {exc}")
+            rollback_error = _rollback_fcom_write(write_fd, target, expected_identity, original)
+            if rollback_error is None:
+                blocked = _blocked(
+                    result,
+                    f"FCOM patch write/read-back failed: {exc}; original target restored",
+                )
+                blocked["rollback"] = "passed"
+                blocked["verification"] = "rollback-passed"
+                return blocked
+            result["rollback"] = "blocked"
+            return _blocked(result, f"FCOM patch write/read-back failed: {exc}; {rollback_error}")
 
         try:
             if _fd_identity(write_fd) != expected_identity or _path_identity(target) != expected_identity:
