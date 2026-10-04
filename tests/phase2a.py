@@ -1154,6 +1154,7 @@ def test_scope() -> None:
     allowed = {
         "AGENTS.md",
         "AZZYAI_FIXES.md",
+        ".github/workflows/verify.yml",
         "CHANGELOG.md",
         "README.md",
         "SKILL.md",
@@ -1168,6 +1169,7 @@ def test_scope() -> None:
         "tests/README.md",
         "tests/phase2a.py",
         "tests/test_azzyai.py",
+        "tests/test_ci_workflow.py",
         "tests/test_engineering_control.py",
         "tests/test_settings_runtime.py",
         "tests/test_whisky.py",

@@ -71,3 +71,13 @@ SHA-256 content policy anchored to an immutable Homebrew cask revision. They
 reject mutable sources, wrong bytes, symlinks, malformed policy, mutated policy
 constants, and candidate-supplied trust values; they also guard the documented
 fail-closed extraction sequence.
+
+## Continuous integration
+
+Pull requests and pushes to `main` run the same repository-native deterministic
+checks on a macOS runner through `.github/workflows/verify.yml`: Python
+compilation, the standard-library unit suite (including the Whisky and AzzyAI
+tests), the Phase 2A harness, and `git diff --check`. A green workflow proves
+those checked-in mechanisms on the runner; it does not prove a live
+Whisky/Wine/game launch, external provenance, account state, or any other
+machine-specific behavior.
