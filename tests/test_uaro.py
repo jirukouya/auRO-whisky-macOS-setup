@@ -461,6 +461,29 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertIn("requires inspection", result["reason"])
         self.assertEqual(uaro.check_fcom(target)["state"], "PATCHED")
 
+    def test_replacement_after_publish_is_not_reported_as_success(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        patched = fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-after-publish"
+        replacement_path.write_bytes(patched)
+        real_publish = uaro._publish_staged_target
+
+        def publish_then_replace(staged: Path, destination: Path, identity: tuple[int, int]) -> tuple[int, int]:
+            published_identity = real_publish(staged, destination, identity)
+            destination.rename(self.root / "published-target")
+            replacement_path.rename(destination)
+            return published_identity
+
+        with mock.patch.object(uaro, "_publish_staged_target", side_effect=publish_then_replace):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["mutation"])
+        self.assertIn("TARGET_REPLACED", result["reason"])
+        self.assertEqual(result["post_state"], "PATCHED")
+        self.assertEqual(uaro.check_fcom(target)["state"], "PATCHED")
+
     def test_backup_replacement_during_write_is_blocked(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
         target = self.target(original)

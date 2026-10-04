@@ -266,17 +266,19 @@ def _publish_staged_target(
     temporary: Path,
     target: Path,
     expected_identity: Tuple[int, int],
-) -> None:
+) -> Tuple[int, int]:
     """Publish a staged target and reject a macOS path-replacement race."""
 
     if sys.platform != "darwin":
         os.replace(temporary, target)
-        return
+        return _path_identity(target)
     _rename_exchange(temporary, target)
     if _path_identity(temporary) != expected_identity:
         _rename_exchange(temporary, target)
         raise RuntimeError("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+    published_identity = _path_identity(target)
     temporary.unlink()
+    return published_identity
 
 
 def _write_atomic_fcom_target(
@@ -285,7 +287,7 @@ def _write_atomic_fcom_target(
     original: bytes,
     patched: bytes,
     read_fd: int,
-) -> None:
+) -> Tuple[int, int]:
     """Stage patched bytes beside the target and atomically publish them.
 
     A failed stage leaves the original target untouched. The target and its
@@ -308,7 +310,7 @@ def _write_atomic_fcom_target(
         if os.fstat(read_fd).st_nlink > 1:
             raise RuntimeError("TARGET_LINKED: hard-linked setup.exe is unsupported for atomic replacement")
         try:
-            _publish_staged_target(temporary, target, expected_identity)
+            published_identity = _publish_staged_target(temporary, target, expected_identity)
         except (OSError, RuntimeError):
             # After exchange/rename has started, the path may no longer contain
             # the staged inode. Leave it for explicit inspection rather than
@@ -316,6 +318,7 @@ def _write_atomic_fcom_target(
             temporary = None
             raise
         temporary = None
+        return published_identity
     finally:
         if temporary is not None:
             try:
@@ -469,7 +472,9 @@ def apply_fcom(
         patched[SITE_A_OFFSET : SITE_A_OFFSET + 1] = A_PATCHED
         patched[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
         try:
-            _write_atomic_fcom_target(target, expected_identity, original, bytes(patched), read_fd)
+            published_identity = _write_atomic_fcom_target(
+                target, expected_identity, original, bytes(patched), read_fd
+            )
         except (OSError, RuntimeError) as exc:
             _record_current_target_state(result, target)
             if result.get("post_state") == "PATCHED":
@@ -484,7 +489,11 @@ def apply_fcom(
             final_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             if not stat.S_ISREG(os.fstat(final_fd).st_mode):
                 raise RuntimeError("target is not a regular file after publish")
+            if _fd_identity(final_fd) != published_identity:
+                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed after atomic publish")
             final = _read_fd(final_fd)
+            if _fd_identity(final_fd) != published_identity or _path_identity(target) != published_identity:
+                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed during post-publish read")
         except (OSError, RuntimeError) as exc:
             _record_current_target_state(result, target)
             return _blocked(result, f"FCOM patch post-publish read failed: {exc}")
