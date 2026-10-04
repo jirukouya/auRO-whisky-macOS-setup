@@ -196,11 +196,39 @@ def _precondition_error(
     return None
 
 
+def _backup_precondition_error(
+    backup: Path,
+    fd: int,
+    expected_identity: Tuple[int, int],
+    expected_bytes: bytes,
+) -> Optional[str]:
+    try:
+        if _fd_identity(fd) != expected_identity or _path_identity(backup) != expected_identity:
+            return "BACKUP_REPLACED: original backup identity changed before mutation"
+        current = _read_fd(fd)
+    except OSError as exc:
+        return f"BACKUP_CHANGED: cannot revalidate original backup before mutation: {exc}"
+    if current != expected_bytes:
+        return "BACKUP_CHANGED: original backup bytes changed before mutation"
+    return None
+
+
 def _create_backup_from_snapshot(backup: Path, original: bytes) -> None:
     with backup.open("xb") as stream:
         stream.write(original)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _open_readonly_regular(path: Path) -> int:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RuntimeError("backup is not a regular file")
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def _open_writable_target(target: Path, expected_identity: Tuple[int, int]) -> int:
@@ -252,6 +280,7 @@ def apply_fcom(
     target = Path(target_path)
     result = _target_record(target, "fcom-apply")
     read_fd: Optional[int] = None
+    backup_fd: Optional[int] = None
     write_fd: Optional[int] = None
     try:
         symlink_reason = _symlink_path_reason(target)
@@ -302,17 +331,25 @@ def apply_fcom(
             return _blocked(result, backup_symlink_reason)
         try:
             if backup.exists():
-                backup_bytes = backup.read_bytes()
+                backup_fd = _open_readonly_regular(backup)
+                backup_identity = _fd_identity(backup_fd)
+                if _path_identity(backup) != backup_identity:
+                    return _blocked(result, "BACKUP_REPLACED: original backup identity changed during validation")
+                backup_bytes = _read_fd(backup_fd)
                 backup_error = _validate_backup(backup_bytes, original)
                 if backup_error:
                     return _blocked(result, backup_error)
             else:
                 _create_backup_from_snapshot(backup, original)
                 result["backup_created"] = True
-                backup_bytes = backup.read_bytes()
+                backup_fd = _open_readonly_regular(backup)
+                backup_identity = _fd_identity(backup_fd)
+                if _path_identity(backup) != backup_identity:
+                    return _blocked(result, "BACKUP_REPLACED: original backup identity changed during creation")
+                backup_bytes = _read_fd(backup_fd)
                 if backup_bytes != original:
                     return _blocked(result, "new original backup does not exactly match target")
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             return _blocked(result, f"cannot validate/create original backup: {exc}")
 
         if before_mutation_hook is not None:
@@ -320,6 +357,10 @@ def apply_fcom(
                 before_mutation_hook()
             except Exception as exc:
                 return _blocked(result, f"TARGET_CHANGED: pre-mutation hook failed: {exc}")
+
+        reason = _backup_precondition_error(backup, backup_fd, backup_identity, original)
+        if reason:
+            return _blocked(result, reason)
 
         reason = _precondition_error(target, read_fd, expected_identity, original)
         if reason:
@@ -387,6 +428,8 @@ def apply_fcom(
     finally:
         if write_fd is not None:
             os.close(write_fd)
+        if backup_fd is not None:
+            os.close(backup_fd)
         if read_fd is not None:
             os.close(read_fd)
 

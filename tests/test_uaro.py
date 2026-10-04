@@ -148,6 +148,46 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), original)
         self.assertEqual(outside_backup.read_bytes(), original)
 
+    def test_backup_symlink_replacement_after_validation_is_blocked(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        backup.write_bytes(original)
+        outside = self.root / "outside-race"
+        outside.write_bytes(original)
+        old_backup = self.root / "old-backup"
+
+        def replace_backup() -> None:
+            backup.rename(old_backup)
+            backup.symlink_to(outside)
+
+        result = uaro.apply_fcom(target, before_mutation_hook=replace_backup)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("BACKUP_REPLACED", result["reason"])
+        self.assertFalse(result["mutation"])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(outside.read_bytes(), original)
+
+    def test_backup_regular_replacement_after_validation_is_blocked(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        backup.write_bytes(original)
+        replacement = self.root / "replacement-backup"
+        replacement.write_bytes(original)
+        old_backup = self.root / "old-backup-regular"
+
+        def replace_backup() -> None:
+            backup.rename(old_backup)
+            replacement.rename(backup)
+
+        result = uaro.apply_fcom(target, before_mutation_hook=replace_backup)
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("BACKUP_REPLACED", result["reason"])
+        self.assertFalse(result["mutation"])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(backup.read_bytes(), original)
+
     def test_valid_unpatched_apply_creates_exact_backup_and_exact_diff(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
         target = self.target(original)
