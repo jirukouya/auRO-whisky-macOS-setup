@@ -251,8 +251,11 @@ def _rename_exchange(source: Path, target: Path) -> None:
 
     if sys.platform != "darwin":
         raise RuntimeError("atomic exchange is only available on macOS")
-    library = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
-    renameatx_np = library.renameatx_np
+    try:
+        library = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
+        renameatx_np = library.renameatx_np
+    except (OSError, AttributeError) as exc:
+        raise RuntimeError(f"macOS atomic exchange unavailable: {exc}") from exc
     renameatx_np.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
     renameatx_np.restype = ctypes.c_int
     at_fdcwd = -2
@@ -266,6 +269,7 @@ def _publish_staged_target(
     temporary: Path,
     target: Path,
     expected_identity: Tuple[int, int],
+    expected_bytes: bytes,
 ) -> Tuple[int, int]:
     """Publish a staged target and reject a macOS path-replacement race."""
 
@@ -273,9 +277,19 @@ def _publish_staged_target(
         os.replace(temporary, target)
         return _path_identity(target)
     _rename_exchange(temporary, target)
+    old_target_fd: Optional[int] = None
+    try:
+        old_target_fd = _open_readonly_regular(temporary)
+        old_target_bytes = _read_fd(old_target_fd)
+    finally:
+        if old_target_fd is not None:
+            os.close(old_target_fd)
     if _path_identity(temporary) != expected_identity:
         _rename_exchange(temporary, target)
         raise RuntimeError("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+    if old_target_bytes != expected_bytes:
+        _rename_exchange(temporary, target)
+        raise RuntimeError("TARGET_CHANGED: setup.exe bytes changed during atomic publish")
     published_identity = _path_identity(target)
     temporary.unlink()
     return published_identity
@@ -310,7 +324,9 @@ def _write_atomic_fcom_target(
         if os.fstat(read_fd).st_nlink > 1:
             raise RuntimeError("TARGET_LINKED: hard-linked setup.exe is unsupported for atomic replacement")
         try:
-            published_identity = _publish_staged_target(temporary, target, expected_identity)
+            published_identity = _publish_staged_target(
+                temporary, target, expected_identity, original
+            )
         except (OSError, RuntimeError):
             # After exchange/rename has started, the path may no longer contain
             # the staged inode. Leave it for explicit inspection rather than

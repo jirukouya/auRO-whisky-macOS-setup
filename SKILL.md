@@ -806,6 +806,16 @@ If the executor is missing, cannot be resolved, exits nonzero, returns malformed
 
 For a fresh or adopted install, run this block after the read-only check above in the same shell invocation and only after the existing Step 8 approval/authority decision for that install route. The initial `UNPATCHED` result is evidence that mutation may be needed; it is not mutation authority. This existing Step 8 authority gate permits the deterministic executor to perform the one active mutation transaction. `fcom apply` owns backup creation, target identity checks, exact writes, and verification. If it fails, block; do not fall back to an inline shell patch or the later Settings launcher.
 
+The executor stages the patched bytes beside `setup.exe` and publishes them as
+one bounded file transaction. On macOS it uses an exchange guard to detect a
+target replacement or same-inode byte change during publication; hard-linked
+targets are rejected because replacing an inode would leave aliases pointing at
+the old file. This protects handled process-level write failures only. It does
+not prove crash durability, preserve metadata beyond the file mode, coordinate
+with non-cooperating external writers, or establish live rollback authority.
+If a backup postcondition fails after publication, the result is `BLOCKED` and
+the structured post-state must be inspected before retrying.
+
 ```bash
 if [[ "$CHECK_STATE" == "PATCHED" ]]; then
   echo "TARGET FCOM evidence: PATCHED; no mutation needed"

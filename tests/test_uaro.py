@@ -438,9 +438,36 @@ class FcomSpikeTests(unittest.TestCase):
 
         with mock.patch.object(uaro, "_rename_exchange", side_effect=race_then_exchange):
             with self.assertRaisesRegex(RuntimeError, "TARGET_REPLACED"):
-                uaro._publish_staged_target(staged, target, expected_identity)
+                uaro._publish_staged_target(staged, target, expected_identity, original)
 
         self.assertEqual(target.read_bytes(), replacement)
+        self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_atomic_publish_rejects_same_inode_change_after_precondition(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        staged = self.root / ".setup.exe.staged"
+        staged.write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        expected_identity = (target.stat().st_dev, target.stat().st_ino)
+        real_exchange = uaro._rename_exchange
+        calls = 0
+
+        def mutate_then_exchange(source: Path, destination: Path) -> None:
+            nonlocal calls
+            if calls == 0:
+                with target.open("r+b") as stream:
+                    stream.seek(0)
+                    stream.write(b"\xff")
+                    stream.flush()
+            calls += 1
+            real_exchange(source, destination)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=mutate_then_exchange):
+            with self.assertRaisesRegex(RuntimeError, "TARGET_CHANGED"):
+                uaro._publish_staged_target(staged, target, expected_identity, original)
+
+        self.assertEqual(target.read_bytes()[0], 0xFF)
         self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
 
     def test_post_publish_error_reports_actual_patched_target(self) -> None:
@@ -448,8 +475,8 @@ class FcomSpikeTests(unittest.TestCase):
         target = self.target(original)
         real_publish = uaro._publish_staged_target
 
-        def publish_then_raise(staged: Path, destination: Path, identity: tuple[int, int]) -> None:
-            real_publish(staged, destination, identity)
+        def publish_then_raise(staged: Path, destination: Path, identity: tuple[int, int], expected: bytes) -> None:
+            real_publish(staged, destination, identity, expected)
             raise OSError("injected post-publish error")
 
         with mock.patch.object(uaro, "_publish_staged_target", side_effect=publish_then_raise):
@@ -469,8 +496,10 @@ class FcomSpikeTests(unittest.TestCase):
         replacement_path.write_bytes(patched)
         real_publish = uaro._publish_staged_target
 
-        def publish_then_replace(staged: Path, destination: Path, identity: tuple[int, int]) -> tuple[int, int]:
-            published_identity = real_publish(staged, destination, identity)
+        def publish_then_replace(
+            staged: Path, destination: Path, identity: tuple[int, int], expected: bytes
+        ) -> tuple[int, int]:
+            published_identity = real_publish(staged, destination, identity, expected)
             destination.rename(self.root / "published-target")
             replacement_path.rename(destination)
             return published_identity

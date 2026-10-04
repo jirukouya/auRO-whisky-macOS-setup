@@ -13,8 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   staging failure leaves the existing target untouched and removes the
   temporary file; the published target is independently read back before
   success is reported. On macOS, the exchange guard detects a target
-  replacement race and restores the concurrent path before blocking. This does
-  not claim crash durability, external-writer coordination outside that guard,
+  replacement race or same-inode byte change and restores the concurrent path
+  before blocking. This does not claim crash durability, external-writer
+  coordination outside that guard,
   metadata preservation beyond the file mode, live rollback authority, or live
   installer behavior.
 - Added a minimal macOS GitHub Actions verification workflow for pull requests
