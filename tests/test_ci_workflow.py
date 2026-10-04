@@ -20,8 +20,9 @@ class CIWorkflowContractTests(unittest.TestCase):
         self.assertIn('  contents: read', self.source)
         self.assertIn('runs-on: macos-14', self.source)
         self.assertIn("python-version: '3.12'", self.source)
-        self.assertIn('actions/checkout@v4', self.source)
-        self.assertIn('actions/setup-python@v5', self.source)
+        self.assertIn('actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683', self.source)
+        self.assertIn('fetch-depth: 0', self.source)
+        self.assertIn('actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065', self.source)
         self.assertNotIn('contents: write', self.source)
         self.assertNotIn('secrets.', self.source)
         self.assertNotIn('sudo ', self.source)
@@ -31,11 +32,12 @@ class CIWorkflowContractTests(unittest.TestCase):
             'python3 -m py_compile scripts/*.py tests/*.py',
             "python3 -B -m unittest discover -s tests -p 'test_*.py'",
             'python3 -B tests/phase2a.py --run',
-            'python3 -B tests/test_whisky.py',
-            'python3 -B tests/test_azzyai.py',
-            'git diff --check',
+            'git diff --check \"origin/$GITHUB_BASE_REF...HEAD\"',
+            'git diff --check \"$GITHUB_EVENT_BEFORE..$GITHUB_SHA\"',
         ):
             self.assertIn(command, self.source)
+        self.assertNotIn('run: python3 -B tests/test_whisky.py', self.source)
+        self.assertNotIn('run: python3 -B tests/test_azzyai.py', self.source)
         for live_or_privileged in (
             'run: wine',
             'run: whisky',
