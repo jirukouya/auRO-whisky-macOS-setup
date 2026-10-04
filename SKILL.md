@@ -416,13 +416,21 @@ Either way, continue identically from here:
 
 ```bash
 set -e
+UARO_ROOT="${UARO_ROOT:-$(git rev-parse --show-toplevel)}"
 cd ~/Downloads
 ditto -xk WhiskyWine-Libraries.zip .
 mkdir -p "$SUPPORT"
-tar -xzf Libraries.tar.gz -C "$SUPPORT"
+python3 "$UARO_ROOT/scripts/whiskywine.py" extract-runtime \
+  --archive "$HOME/Downloads/Libraries.tar.gz" \
+  --destination "$SUPPORT"
 ```
 
-**Quarantine-clear, defensively.** Files extracted by `tar` come out read-only, and macOS's `xattr -d` requires write permission on the target just to *attempt* a delete — so it errors on nearly every file, even though (confirmed) these files never had `com.apple.quarantine` set in the first place (only the harmless `com.apple.provenance`, which doesn't block execution). This is a no-op either way, but do it defensively so it can never abort a `set -e` script:
+The repository helper validates every tar member before extraction and blocks
+absolute/traversal paths, links, special files, duplicate paths, and writes into
+an already-populated top-level destination. Runtime provenance remains
+unconfirmed; this is extraction safety only.
+
+**Quarantine-clear, defensively.** Runtime files extracted by the helper preserve the archive's read-only modes, and macOS's `xattr -d` requires write permission on the target just to *attempt* a delete — so it errors on nearly every file, even though (confirmed) these files never had `com.apple.quarantine` set in the first place (only the harmless `com.apple.provenance`, which doesn't block execution). This is a no-op either way, but do it defensively so it can never abort a `set -e` script:
 
 ```bash
 chmod -R u+w "$SUPPORT/Libraries" 2>/dev/null || true
@@ -1231,8 +1239,6 @@ cd "<GAME_DIR>"
 # only tears down the server for this bottle's own WINEPREFIX (already scoped
 # by the shellenv eval above), so this doesn't touch any other bottle.
 wineserver -k >/dev/null 2>&1 || true
-pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
-pkill -f "uaRO.exe" >/dev/null 2>&1 || true
 sleep 1
 
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
@@ -1245,6 +1251,7 @@ wine64 reg add 'HKEY_CURRENT_USER\Software\Wine\WineDbg' /v ShowCrashDialog /t R
 
 attempt=1
 code=0
+existing_game_pids="$(pgrep -f "uaRO.exe" 2>/dev/null || true)"
 while [[ $attempt -le 2 ]]; do
     start=$(date +%s)
     wine64 "UaRo Patcher.exe" >/dev/null 2>&1 &
@@ -1265,12 +1272,20 @@ while [[ $attempt -le 2 ]]; do
     # though the handoff kills the patcher with a non-zero status (observed
     # live: exit 137/SIGKILL, 44s after launch). Without this check, any
     # sub-60s handoff matches the retry heuristic below exactly and spawns a
-    # ghost second patcher next to the launching game. The stale-process
-    # cleanup at the top of this script pkills uaRO.exe, so if it's running
-    # here, this patcher session started it. sleep first: give the freshly
-    # spawned game process a moment to be reliably visible to pgrep.
+    # ghost second patcher next to the launching game. Compare against the
+    # pre-launch PID snapshot so a same-named game in another bottle cannot
+    # satisfy this handoff check. Sleep first so the new process is visible.
     sleep 2
-    if pgrep -f "uaRO.exe" >/dev/null 2>&1; then
+    current_game_pids="$(pgrep -f "uaRO.exe" 2>/dev/null || true)"
+    handoff=0
+    while IFS= read -r game_pid; do
+        [[ -z "$game_pid" ]] && continue
+        if ! printf '%s\n' "$existing_game_pids" | grep -Fxq "$game_pid"; then
+            handoff=1
+            break
+        fi
+    done <<< "$current_game_pids"
+    if [[ $handoff -eq 1 ]]; then
         code=0
         break
     fi
@@ -1429,9 +1444,6 @@ PYEOF
 }
 
 wineserver -k >/dev/null 2>&1 || true
-pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
-pkill -f "uaRO.exe" >/dev/null 2>&1 || true
-pkill -f "setup.exe" >/dev/null 2>&1 || true
 sleep 1
 
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
@@ -1557,8 +1569,6 @@ cd "<GAME_DIR>"
 
 # Same stale-process cleanup as uaro-patcher/uaro-settings -- see those scripts for why.
 wineserver -k >/dev/null 2>&1 || true
-pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
-pkill -f "uaRO.exe" >/dev/null 2>&1 || true
 sleep 1
 
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}msvcp140,vcruntime140,concrt140,vccorlib140=n,b"
@@ -1710,9 +1720,6 @@ EOF
 cmd_kill() {
     eval "$("$WHISKY" shellenv "$BOTTLE_NAME")" 2>/dev/null || true
     wineserver -k >/dev/null 2>&1 || true
-    pkill -f "UaRo Patcher.exe" >/dev/null 2>&1 || true
-    pkill -f "uaRO.exe" >/dev/null 2>&1 || true
-    pkill -f "setup.exe" >/dev/null 2>&1 || true
     echo "Killed any running uaRO/Wine processes for bottle '$BOTTLE_NAME'."
 }
 

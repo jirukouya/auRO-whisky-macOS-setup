@@ -10,12 +10,14 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest import mock
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import whisky  # noqa: E402
+import whiskywine  # noqa: E402
 
 
 class WhiskyPolicyTests(unittest.TestCase):
@@ -43,6 +45,27 @@ class WhiskyPolicyTests(unittest.TestCase):
         self.assertIn("exact v2.3.5 release verifier", row)
         self.assertNotIn("fall back to GitHub release zip only if truly absent", row)
 
+    def test_troubleshooting_whiskywine_fallback_order_matches_current_route(self) -> None:
+        troubleshooting = (Path(__file__).resolve().parents[1] / "TROUBLESHOOTING.md").read_text()
+        row = next(line for line in troubleshooting.splitlines() if "`command not found: wine64`" in line)
+        self.assertIn("repo's archived runtime first", row)
+        self.assertIn("Internet Archive only as the last-resort fallback", row)
+        self.assertIn("provenance in v1", row)
+
+    def test_troubleshooting_installer_row_distinguishes_setup_tools(self) -> None:
+        troubleshooting = (Path(__file__).resolve().parents[1] / "TROUBLESHOOTING.md").read_text()
+        row = next(line for line in troubleshooting.splitlines() if "Inno Setup installs into the bottle" in line)
+        self.assertIn("UaRO_Setup.exe", row)
+        self.assertIn("Step 7", row)
+        self.assertIn("RO OpenSetup tool", row)
+        self.assertNotIn("wine64 setup.exe /DIR", row)
+
+    def test_launcher_process_cleanup_stays_bottle_scoped(self) -> None:
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        step11 = skill[skill.index("## Step 11 — Build the three launcher .app bundles") :]
+        self.assertNotIn("pkill -f", step11)
+        self.assertIn("wineserver -k", step11)
+
     def test_skill_download_routes_fail_closed_and_extract_verified_snapshot(self) -> None:
         skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
         start = skill.index("## Step 3 — Whisky.app")
@@ -59,6 +82,47 @@ class WhiskyPolicyTests(unittest.TestCase):
             self.assertEqual(block.count("verify-and-extract"), 1)
             self.assertNotIn("ditto -xk", block)
             self.assertIn("mktemp -d /tmp/Whisky-extract.", block)
+
+    def test_whiskywine_route_uses_safe_runtime_extractor(self) -> None:
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        start = skill.index("## Step 4 — WhiskyWine runtime")
+        end = skill.index("## Step 5 —", start)
+        section = skill[start:end]
+        self.assertIn('scripts/whiskywine.py" extract-runtime', section)
+        self.assertNotIn("tar -xzf Libraries.tar.gz -C", section)
+
+    def test_whiskywine_extractor_blocks_traversal_and_links(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="whiskywine-extract-") as temp:
+            root = Path(temp)
+            archive = root / "Libraries.tar.gz"
+            destination = root / "support"
+            with tarfile.open(archive, "w:gz") as bundle:
+                body = b"runtime"
+                info = tarfile.TarInfo("Libraries/Wine/bin/wine64")
+                info.size = len(body)
+                info.mode = 0o755
+                bundle.addfile(info, io.BytesIO(body))
+            result = whiskywine.extract_runtime(archive, destination)
+            self.assertEqual(result["result"], "success")
+            self.assertEqual((destination / "Libraries/Wine/bin/wine64").read_bytes(), b"runtime")
+
+            traversal = root / "traversal.tar.gz"
+            with tarfile.open(traversal, "w:gz") as bundle:
+                info = tarfile.TarInfo("../escape")
+                info.size = 1
+                bundle.addfile(info, io.BytesIO(b"x"))
+            blocked = whiskywine.extract_runtime(traversal, root / "blocked")
+            self.assertEqual(blocked["result"], "blocked")
+            self.assertFalse((root / "escape").exists())
+
+            link_archive = root / "link.tar.gz"
+            with tarfile.open(link_archive, "w:gz") as bundle:
+                info = tarfile.TarInfo("Libraries/link")
+                info.type = tarfile.SYMTYPE
+                info.linkname = "/tmp/outside"
+                bundle.addfile(info)
+            link_blocked = whiskywine.extract_runtime(link_archive, root / "link-blocked")
+            self.assertEqual(link_blocked["result"], "blocked")
 
     def test_source_policy_is_fixed_and_descriptive(self) -> None:
         policy = whisky.source_policy()

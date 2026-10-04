@@ -1122,6 +1122,7 @@ def test_uaro_cli() -> None:
     require("optional launcher not installed, skipping" in source, "optional Game.app handling is missing")
     require("if [[ $problems -eq 0 ]]" in source, "uaro-cli final problems decision is missing")
     require("if [[ $any -eq 0 ]]" not in source, "zero-launcher healthy-success path remains")
+    require("pkill -f" not in source, "uaro-cli still uses an unscoped process kill")
 
     cases = (
         ("healthy required state with optional Game.app absent", {}, 0),
@@ -1156,10 +1157,12 @@ def test_scope() -> None:
         "CHANGELOG.md",
         "README.md",
         "SKILL.md",
+        "TROUBLESHOOTING.md",
         "scripts/azzyai.py",
         "scripts/build_settings_runtime.py",
         "scripts/engineering_control.py",
         "scripts/whisky.py",
+        "scripts/whiskywine.py",
         "scripts/uaro.py",
         "tests/README.md",
         "tests/phase2a.py",
