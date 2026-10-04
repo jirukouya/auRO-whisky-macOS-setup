@@ -1,0 +1,59 @@
+{
+  "artifact": "AzzyAI USER_AI tree review manifest",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "content_scope": "USER_AI",
+  "entries": [
+    {
+      "kind": "file",
+      "path": "AI.lua",
+      "sha256": "49f9189e510c4ace1d7f021c5261608468f026a178473e0512de88c8165266a2",
+      "size": 90
+    },
+    {
+      "kind": "file",
+      "path": "AI_main.lua",
+      "sha256": "99a28ed6731e961c1eb4205324f6b2f7c9c99efe635a1b82bd475bc2bbc0aefc",
+      "size": 92
+    },
+    {
+      "kind": "file",
+      "path": "AzzyAIConfig.exe",
+      "sha256": "ef4e2cf4a98da1ef56e359049f6459589ae56be96c8b73a36961327d764e4c59",
+      "size": 34
+    },
+    {
+      "kind": "file",
+      "path": "Documentation.pdf",
+      "sha256": "360d80132ffe7d3f4cd5ff4d128277a9f50d2e84a9d435f883657ec683bdbfe5",
+      "size": 27
+    },
+    {
+      "kind": "directory",
+      "path": "data",
+      "sha256": "",
+      "size": 0
+    },
+    {
+      "kind": "file",
+      "path": "data/dummy.txt",
+      "sha256": "896448159469f7667fee358a2bf080b4c22fae9f9e513cb2a154163f289fe2fc",
+      "size": 15
+    },
+    {
+      "kind": "directory",
+      "path": "nested",
+      "sha256": "",
+      "size": 0
+    },
+    {
+      "kind": "file",
+      "path": "nested/M_Config.lua",
+      "sha256": "e6ea4af41fd45c760d85b372b4248f5fb5e0dbadd333c57887a26b2bdce0a4d6",
+      "size": 94
+    }
+  ],
+  "manifest_kind": "project-authored-synthetic-test-fixture",
+  "repository": "test-only",
+  "schema_version": 1,
+  "tree_identity": "6a72f2727975f8b1990b5a67df8f52de9edc3b3473433474158914a121b0cbcb"
+}

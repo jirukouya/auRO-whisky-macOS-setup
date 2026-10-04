@@ -6,7 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Added
+- Added an artifact-specific Whisky 2.3.5 source policy and SHA-256 download verifier.
+  Official and project fallback archives must match the digest anchored by the
+  immutable Homebrew cask revision `87180be1e381499a994990a044944580d180be44`
+  before extraction; fallback provenance remains explicit.
+- Added a thin project-level `AGENTS.md` root contract and an evidence-only
+  `scripts/engineering_control.py` control plane for repository snapshots,
+  stale-checkpoint reconciliation, volatile state boundaries, Phase Envelope
+  validation, and the compact architecture Advisor boundary. It does not grant
+  mutation or destructive authority.
+- Added fixture tests for exact, newer, scoped-dirty, unrelated-dirty, and
+  ambiguous control-plane states.
+
 ### Changed
+- The troubleshooting cask row now matches the current exact-release Whisky
+  route and no longer presents the mutable Homebrew cask as a fallback
+  acquisition path.
+- Step 6 now stages the user-supplied uaRO installer into a temporary file
+  and atomically replaces the extraction input only after a non-empty
+  successful copy/download, so a failed fetch cannot fall through to an older
+  archive; it also creates the actual staging directory independently of the
+  selected game directory.
+- Whisky installation now stops on any pre-existing unverified app and uses
+  only the exact upstream release or byte-anchored project fallback. Download
+  verification is fail-closed, repeated immediately before extraction, and
+  extracts into a fresh temporary directory.
 - Reworked `README.md` into a route-based front door for fresh installs, existing installs, verify-only checks, repairs, uninstall, and AzzyAI tasks.
 - Removed the stale hardcoded release heading and corrected the repository description to reflect its supporting references.
 - Added the AI-versus-user responsibility boundary, three-gate success summary, evidence-status notes, symptom routing, Xcode Command Line Tools requirement, and safer uninstall explanation.

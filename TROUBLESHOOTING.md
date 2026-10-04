@@ -57,15 +57,15 @@ Sorted, and taggable, by **Category** — use it to jump straight to the relevan
 
 | Category | Symptom | Cause | Fix |
 |---|---|---|---|
-| Install/Homebrew | `brew install --cask whisky` exits 0 but installs nothing | Cask can be silently disabled upstream | Verify with `find_whisky_app`-equivalent check; fall back to GitHub release zip only if truly absent |
-| Runtime/Wine | `command not found: wine64` | WhiskyWine runtime never downloaded (dead CDN) | Manually install from Internet Archive snapshot (Step 4); never rely on Whisky's own downloader |
+| Install/Homebrew | `brew install --cask whisky` exits 0 but installs nothing | The deprecated cask can be silently disabled upstream | Treat the cask as a diagnostic probe only; follow Step 3's exact v2.3.5 release verifier, and stop on any pre-existing unverified app |
+| Runtime/Wine | `command not found: wine64` | WhiskyWine runtime never downloaded (dead CDN) | Follow Step 4: use this repo's archived runtime first; use the Internet Archive only as the last-resort fallback. Both sources have unconfirmed provenance in v1; never rely on Whisky's own downloader |
 | Runtime/Wine | Whisky's "Install GPTK" shows instant success but nothing works | Download URL 404s, Whisky doesn't surface the error | Ignore that button; install WhiskyWine manually |
 | Install/Download | Empty folder after `unzip` | macOS's bundled unzip can't handle ZIP64 archives >4GB | Always use `ditto -xk` |
 | Runtime/Wine | `xattr -dr com.apple.quarantine` floods "Permission denied" | tar-extracted files are read-only; `xattr -d` needs write perms just to *attempt* a delete, regardless of whether the attribute exists | `chmod -R u+w ... \|\| true` before the `xattr` call, and `\|\| true` on it too |
 | Runtime/Wine | `WhiskyWineVersion.plist` written as a plain string silently fails `isWhiskyWineInstalled()` | Whisky's Codable decode expects a structured `{major,minor,patch,preRelease,build}` dict, not a string | Use the exact structured plist in Step 4 |
 | Bottle/Config | `whisky list` prints a bottle path that doesn't exist | Cosmetic CLI display bug | Always use `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/<UUID>` |
 | Install/Download | A just-extracted/downloaded file mysteriously vanishes and Wine reports `c0000135` | iCloud Drive silently relocated the folder out from under the running process — affects `~/Downloads` too, not just `~/Documents`/`~/Desktop` | Use a non-iCloud `GAME_DIR`/scratch dir (`~/Games/...`); always wait ~30s and recheck after any extraction there |
-| Install/Installer | Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Use `WHISKY=$(command -v whisky \|\| echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd); eval "$("$WHISKY" shellenv <bottle>)"; wine64 setup.exe /DIR=Z:\...` directly |
+| Install/Installer | Inno Setup installs into the bottle, not where `/DIR=` said | `whisky run` is App-sandboxed | Follow Step 7's exact `UaRO_Setup.exe` command using `wine64` directly, then verify the result landed at `$GAME_DIR`. Do not run `setup.exe` here; Step 8's `setup.exe` is the separate RO OpenSetup tool |
 | Crash/Gameplay | Game crashes ~3s after login | Gepard CPU detection | `WINE_CPU_TOPOLOGY=4:0,1,2,3` in the launcher |
 | Crash/Gameplay | `Gepard::T Code: 3::110::12` | Native MSVC DLLs not loading | `WINEDLLOVERRIDES` must include `msvcp140,vcruntime140,concrt140,vccorlib140=n,b`, DLLs must sit next to the game exe |
 | Runtime/Wine | Low FPS / stutter | Launcher replaced `WINEDLLOVERRIDES` instead of appending | Use the `${VAR:+$VAR;}` append idiom, never overwrite |

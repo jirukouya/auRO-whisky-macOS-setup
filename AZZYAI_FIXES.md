@@ -6,14 +6,22 @@ AzzyAI is a third-party Lua AI for controlling a mercenary or homunculus. This f
 
 ## Step 1 — Download AzzyAI
 
-**Source: [github.com/SpenceKonde/AzzyAI](https://github.com/SpenceKonde/AzzyAI)** — the author's own repo, still the canonical source even though the README says it's no longer actively maintained (last pushed 2020, no packaged Releases, so the download is the repo's own zip archive, not a versioned release asset). Never point a player at a random forum re-upload — this repo is public, verifiable, and confirmed reachable.
+**Source: [github.com/SpenceKonde/AzzyAI](https://github.com/SpenceKonde/AzzyAI)** — the author's own public source repository. It is no longer actively maintained (last pushed 2020) and has no packaged Releases, so this playbook uses the one AzzyAI commit reviewed by this project rather than a moving branch archive. A commit ID gives an immutable source selection and reproducible extracted contents; it does not prove signer authenticity. Never point a player at a random forum re-upload.
 
 ```bash
-curl -fL --progress-bar -o ~/Downloads/AzzyAI-master.zip \
-  https://github.com/SpenceKonde/AzzyAI/archive/refs/heads/master.zip
+AURO_REPO_ROOT="<the checked-out auRO-whisky-macOS-setup path>"
+PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
+[[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
+  echo "BLOCKED: an absolute executable Python runtime is required" >&2
+  exit 1
+}
+AZZYAI_REPOSITORY="$($PYTHON_RUNTIME "$AURO_REPO_ROOT/scripts/azzyai.py" source-policy --field repository)"
+AZZYAI_COMMIT="$($PYTHON_RUNTIME "$AURO_REPO_ROOT/scripts/azzyai.py" source-policy --field commit)"
+curl -fL --progress-bar -o ~/Downloads/AzzyAI-"$AZZYAI_COMMIT".zip \
+  "$AZZYAI_REPOSITORY/archive/$AZZYAI_COMMIT.zip"
 ```
 
-If the player would rather click through a browser instead of a terminal command: the repo's green **Code → Download ZIP** button produces the exact same file.
+If the player would rather click through a browser instead of a terminal command: open the reviewed commit shown by `source-policy` and use its **Code → Download ZIP** button. Do not substitute the repository's default-branch download or a `latest` URL.
 
 ## Step 2 — Locate the game's `USER_AI` folder
 
@@ -25,19 +33,58 @@ find ~ -maxdepth 6 -type d -iname "USER_AI" 2>/dev/null
 
 ## Step 3 — Extract and copy the right files
 
-**Extract to a scratch folder first, then copy — never extract directly on top of `USER_AI`.** This is the one step most likely to be done wrong: the GitHub zip's internal layout nests everything one level deeper than AzzyAI's own historical packaged releases (the ones its `Documentation.pdf` was written against) — extracting it produces `AzzyAI-master/USER_AI/<the actual .lua files, AzzyAIConfig.exe, Documentation.pdf>`, not the flat `AzzyAI-master/<files>` the PDF describes. **What has to land in the game's real `USER_AI/` folder is the *contents* of `AzzyAI-master/USER_AI/`, not the `AzzyAI-master` folder itself and not a nested `USER_AI` folder inside it:**
+**Extract to a scratch folder first, then copy — never extract directly on top of `USER_AI`.** This is the one step most likely to be done wrong: the commit archive's internal layout nests everything one level deeper than AzzyAI's own historical packaged releases (the ones its `Documentation.pdf` was written against) — extracting it produces `AzzyAI-<commit>/USER_AI/<the actual .lua files, AzzyAIConfig.exe, Documentation.pdf>`, not the flat `AzzyAI-<commit>/<files>` the PDF describes. **What has to land in the game's real `USER_AI/` folder is the *contents* of `AzzyAI-<commit>/USER_AI/`, not the `AzzyAI-<commit>` folder itself and not a nested `USER_AI` folder inside it:**
 
 ```bash
-mkdir -p /tmp/azzyai-extract
-ditto -xk ~/Downloads/AzzyAI-master.zip /tmp/azzyai-extract
+AZZYAI_EXTRACT_DIR="${TMPDIR:-/tmp}/azzyai-extract"
+mkdir -p "$AZZYAI_EXTRACT_DIR"
+ditto -xk ~/Downloads/AzzyAI-"$AZZYAI_COMMIT".zip "$AZZYAI_EXTRACT_DIR"
+AZZYAI_SOURCE_DIR="$AZZYAI_EXTRACT_DIR/AzzyAI-$AZZYAI_COMMIT/USER_AI"
+[[ -d "$AZZYAI_SOURCE_DIR" ]] || {
+  echo "BLOCKED: the reviewed archive did not produce the expected USER_AI subtree" >&2
+  exit 1
+}
 ```
 
-**Before copying, ask whether the player wants to keep any existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files) — copying AzzyAI's version over the top replaces it. Most players installing AzzyAI want exactly that, but confirm rather than assuming, per AzzyAI's own documented caveat:
+**Before replacing anything, ask whether the player wants to replace the existing AI.** A fresh `USER_AI/` already has uaRO's own default mercenary/homunculus AI in it (`AI.lua` for homunculus, `AI_M.lua` for mercenary, among other files). The replacement route below always makes an external, independently compared backup first; a user's answer controls whether replacement is wanted, not whether the safety gate can be skipped. Do not use a direct `cp -R` over the live directory:
 
 ```bash
 USER_AI_DIR="<the real path find just printed>"
-cp -R /tmp/azzyai-extract/AzzyAI-master/USER_AI/. "$USER_AI_DIR/"
+AZZYAI_BACKUP_DIR="<an external path that does not already exist>"
+"$PYTHON_RUNTIME" "$AURO_REPO_ROOT/scripts/azzyai.py" verify-source \
+  --source "$AZZYAI_SOURCE_DIR" \
+  --source-repository "$AZZYAI_REPOSITORY" \
+  --source-commit "$AZZYAI_COMMIT"
+"$PYTHON_RUNTIME" "$AURO_REPO_ROOT/scripts/azzyai.py" replace \
+  --source "$AZZYAI_SOURCE_DIR" \
+  --source-repository "$AZZYAI_REPOSITORY" \
+  --source-commit "$AZZYAI_COMMIT" \
+  --destination "$USER_AI_DIR" \
+  --backup "$AZZYAI_BACKUP_DIR"
 ```
+
+The source check and replacement command both block when the claimed repository
+or commit differs from the reviewed policy, when the extracted `USER_AI` tree
+does not match the project-pinned content identity, or when the source contains
+symlinks or unsupported entries. The command also blocks when the existing
+`USER_AI` tree is missing, unreadable, a
+symlink, or changed during the transaction; when the backup destination exists
+or is inside `USER_AI`; when copying reports failure; or when the staged tree
+does not compare byte-for-byte with the replacement tree. On success it leaves
+the previous live tree beside `USER_AI` as a rollback copy and emits structured
+operation output plus a small descriptive JSONL sidecar. The sidecar records
+status and paths for the observed transaction; it is not replayable proof and
+is never read as authority. A printed `backup_verified` field is evidence only;
+the replacement command creates its own path-bound authorization and rechecks
+both trees immediately before the
+directory exchange. The default CLI path also appends descriptive records to
+`<AZZYAI_BACKUP_DIR>.evidence.jsonl`; these records explain what was observed,
+are fsynced before a live exchange, and are never read as authority for a later
+replacement. If completion evidence cannot be persisted after the exchange,
+the command attempts to restore the previous tree and exits blocked. The
+replacement authorization repeats the pinned tree check against the source
+snapshot it binds, so a source swap after the standalone preflight cannot turn
+an untrusted tree into F-07 replacement authority.
 
 ## Step 4 — Activate AzzyAI in-game
 
@@ -58,7 +105,7 @@ At least one of these (M for mercenary, H for homunculus, matching whichever was
 
 **What almost certainly happens next, on uaRO specifically:** the mercenary/homunculus will follow around but never attack, regardless of config. This is expected on private servers — go straight into Phase B below and apply all five fixes as a matter of course on uaRO rather than waiting for the player to report it, since this project has already confirmed uaRO hits every one of them.
 
-**One caveat on file versions:** the GitHub source isn't guaranteed byte-identical to the specific `AzzyAI 1.551` packaged release Phase B was originally diagnosed against (file sizes differ slightly) — but all five causes below are long-standing, core AzzyAI logic, not version-specific quirks, and every patch is applied by searching for the actual code pattern (never a hardcoded line number), so it holds regardless of exactly which build was downloaded.
+**One caveat on file versions:** the reviewed GitHub tree isn't guaranteed byte-identical to the specific `AzzyAI 1.551` packaged release Phase B was originally diagnosed against (file sizes differ slightly). The patches below are applied by searching for the actual code pattern (never a hardcoded line number); after changing the reviewed source, rerun the source check and reapply the pattern-based patches deliberately.
 
 ## Phase B — Fixing "installs fine, but never attacks" (Steps 6–10)
 
