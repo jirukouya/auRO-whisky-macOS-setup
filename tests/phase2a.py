@@ -647,6 +647,7 @@ def run_savedata(
         "HOME": str(game.parent / "home"),
         "BACKUP_ROOT": str(game.parent / "backup-root"),
         "BACKUP_DIR": str(backup_dir),
+        "UNINSTALL_LEVEL": "1",
         "AURO_REPO_ROOT": str(repo_root),
         "PYTHON_RUNTIME": sys.executable,
     }
@@ -659,15 +660,16 @@ def test_savedata_gate() -> None:
     require("backup savedata" in block, "savedata route does not invoke the deterministic executor")
     require("BACKUP_JSON" in block and "backup_verified" in block, "savedata route does not validate structured evidence")
     require("comparison.get(\"status\") != \"equal\"" in block, "savedata route does not require independent comparison")
-    require(block.index("SAVEDATA_BACKUP_VERIFIED=1") > block.index("backup_verified"), "deletion authority is granted before executor validation")
+    require(block.index("BACKUP_EVIDENCE_VERIFIED=1") > block.index("backup_verified"), "backup evidence is emitted before executor validation")
+    require("UNINSTALL_LEVEL=\"${UNINSTALL_LEVEL:?" in block, "uninstall level is not explicitly selected for this invocation")
     require("cp -R" not in block and "diff -qr" not in block, "legacy shell savedata transaction remains active")
 
     text = skill_text()
-    level1_marker = "```bash\n# --- Level 1: game only ---\n"
+    level1_marker = "```bash\n[[ \"${UNINSTALL_LEVEL:-}\" == 1 ]]"
     level1_start = text.index(level1_marker) + len("```bash\n")
     level1_end = text.index("```", level1_start)
     level1 = text[level1_start:level1_end]
-    require(level1.index("SAVEDATA_BACKUP_VERIFIED") < level1.index("LSREGISTER"), "destructive uninstall lacks a final backup-verification gate")
+    require(level1.index("BACKUP_EVIDENCE_VERIFIED") < level1.index("LSREGISTER"), "destructive uninstall lacks a final backup-evidence gate")
 
     with tempfile.TemporaryDirectory(prefix="phase2a-savedata-") as temp:
         root = Path(temp) / "fixture root with spaces"
@@ -675,8 +677,10 @@ def test_savedata_gate() -> None:
         game = root / "game"
         source = game / "savedata"
         source.mkdir(parents=True)
+        (game / "setup.exe").write_bytes(b"setup")
+        (game / "uaRO.exe").write_bytes(b"uaro")
         (source / "slot.dat").write_bytes(b"save")
-        external = root / "external-backup"
+        external = root / "backup-root" / "external-backup"
         before = tree_bytes(game)
         proc = run_savedata(game, external)
         require(proc.returncode == 0, f"valid external backup failed: {report_process(proc)}")
@@ -685,7 +689,9 @@ def test_savedata_gate() -> None:
 
         game_empty = root / "empty-game"
         (game_empty / "savedata").mkdir(parents=True)
-        empty_backup = root / "empty-backup"
+        (game_empty / "setup.exe").write_bytes(b"setup")
+        (game_empty / "uaRO.exe").write_bytes(b"uaro")
+        empty_backup = root / "backup-root" / "empty-backup"
         proc = run_savedata(game_empty, empty_backup)
         require(proc.returncode == 0, f"empty existing savedata failed: {report_process(proc)}")
         require((empty_backup / "savedata").is_dir(), "empty savedata backup directory is missing")
@@ -698,6 +704,8 @@ def test_savedata_gate() -> None:
         existing_game = root / "existing-game"
         existing_source = existing_game / "savedata"
         existing_source.mkdir(parents=True)
+        (existing_game / "setup.exe").write_bytes(b"setup")
+        (existing_game / "uaRO.exe").write_bytes(b"uaro")
         (existing_source / "slot.dat").write_bytes(b"save")
         existing_backup = root / "existing-backup"
         existing_backup.mkdir()
@@ -711,28 +719,36 @@ def test_savedata_gate() -> None:
         write_executable(malformed_repo / "scripts" / "uaro.py", "#!/usr/bin/env python3\nprint('{}')\n")
         malformed_game = root / "malformed-game"
         (malformed_game / "savedata").mkdir(parents=True)
+        (malformed_game / "setup.exe").write_bytes(b"setup")
+        (malformed_game / "uaRO.exe").write_bytes(b"uaro")
         (malformed_game / "savedata" / "slot.dat").write_bytes(b"save")
         proc = run_savedata(malformed_game, root / "malformed-backup", repo_root=malformed_repo)
         require(proc.returncode != 0, f"malformed executor evidence unexpectedly passed: {report_process(proc)}")
-        require("SAVEDATA_BACKUP_VERIFIED=1" not in proc.stdout, "malformed evidence granted deletion authority")
+        require("BACKUP_EVIDENCE_VERIFIED=1" not in proc.stdout, "malformed evidence granted deletion authority")
 
         failed_repo = root / "failed-repo"
         (failed_repo / "scripts").mkdir(parents=True)
         write_executable(failed_repo / "scripts" / "uaro.py", "#!/usr/bin/env python3\nraise SystemExit(7)\n")
         failed_game = root / "failed-game"
         (failed_game / "savedata").mkdir(parents=True)
+        (failed_game / "setup.exe").write_bytes(b"setup")
+        (failed_game / "uaRO.exe").write_bytes(b"uaro")
         (failed_game / "savedata" / "slot.dat").write_bytes(b"save")
         proc = run_savedata(failed_game, root / "failed-backup", repo_root=failed_repo)
         require(proc.returncode != 0, f"failed executor unexpectedly passed: {report_process(proc)}")
 
         inside_source_game = root / "inside-source-game"
         (inside_source_game / "savedata").mkdir(parents=True)
+        (inside_source_game / "setup.exe").write_bytes(b"setup")
+        (inside_source_game / "uaRO.exe").write_bytes(b"uaro")
         inside_source_backup = inside_source_game / "savedata" / "backup"
         proc = run_savedata(inside_source_game, inside_source_backup)
         require(proc.returncode != 0, "destination inside SOURCE was accepted")
 
         inside_game = root / "inside-game"
         (inside_game / "savedata").mkdir(parents=True)
+        (inside_game / "setup.exe").write_bytes(b"setup")
+        (inside_game / "uaRO.exe").write_bytes(b"uaro")
         inside_game_backup = inside_game / "backup"
         proc = run_savedata(inside_game, inside_game_backup)
         require(proc.returncode != 0, "destination inside GAME_DIR was accepted")

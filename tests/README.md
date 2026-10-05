@@ -24,10 +24,11 @@ and never invokes Whisky, Wine, uaRO, a real launcher, or a deletion command.
 
 WhiskyWine tests exercise the production extractor's lifecycle boundary: a
 complete single `Libraries/` tree is staged before publication, ancestor
-symlink aliases and multi-root archives are blocked, staging failures do not
-create a destination, and a post-rename error is classified from the actual
-published tree. `PUBLISHED_VERIFIED` is local filesystem evidence only; it does
-not establish runtime provenance or live Wine behavior.
+symlink aliases and raw traversal paths are blocked, the publish rename is
+directory-descriptor bound, staging failures do not create a destination, and
+a post-rename error is classified from the actual published tree.
+`PUBLISHED_VERIFIED` is local filesystem evidence only; it does not establish
+runtime provenance or live Wine behavior.
 
 The FCOM and savedata cases extract the actual shell/Python procedures from
 SKILL.md and execute them against temporary files; the savedata route invokes

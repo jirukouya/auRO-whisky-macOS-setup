@@ -75,6 +75,11 @@ def _is_symlink(path: Path) -> bool:
 def _has_symlink_component(path: Path) -> bool:
     """Reject user path aliases while allowing stable macOS /var and /tmp aliases."""
 
+    # Do not normalize away traversal before inspecting the user-supplied
+    # components.  ``alias/../support`` can otherwise pass the check while the
+    # kernel follows ``alias`` first and resolves the remainder elsewhere.
+    if ".." in Path(path).parts:
+        return True
     absolute = Path(os.path.abspath(path))
     current = Path(absolute.anchor)
     for component in absolute.parts[1:]:
@@ -92,6 +97,16 @@ def _has_symlink_component(path: Path) -> bool:
 def _identity(path: Path) -> tuple[int, int]:
     metadata = os.lstat(path)
     return metadata.st_dev, metadata.st_ino
+
+
+def _fd_identity(descriptor: int) -> tuple[int, int]:
+    metadata = os.fstat(descriptor)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _directory_fd(path: Path, *, dir_fd: int | None = None) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags, dir_fd=dir_fd)
 
 
 def _tree_manifest(root: Path) -> dict[str, tuple[str, int, str]]:
@@ -116,20 +131,28 @@ def _tree_manifest(root: Path) -> dict[str, tuple[str, int, str]]:
 def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> dict[str, Any]:
     archive = Path(archive_path)
     destination = Path(destination_path)
+    parent_fd = -1
     try:
+        if destination.name in ("", ".", ".."):
+            return _result("blocked", "extraction destination must name a child directory")
         if _has_symlink_component(destination):
             return _result("blocked", "extraction destination contains a symlink path component")
         if destination.exists() and (destination.is_symlink() or not destination.is_dir()):
             return _result("blocked", "extraction destination must be a regular directory")
         if not destination.parent.is_dir():
             return _result("blocked", "extraction destination parent is missing")
-        parent_identity = _identity(destination.parent)
+        parent_fd = _directory_fd(destination.parent)
+        parent_identity = _fd_identity(parent_fd)
         descriptor = _archive_fd(archive)
     except (OSError, ValueError) as exc:
+        if parent_fd != -1:
+            os.close(parent_fd)
         return _result("blocked", f"cannot open runtime archive: {exc}")
 
     created_destination = False
     published = False
+    destination_fd = -1
+    stage_fd = -1
     try:
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
@@ -197,29 +220,72 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                     if not staged_runtime.is_dir() or staged_runtime.is_symlink():
                         return _result("blocked", "runtime archive Libraries root is not a regular directory")
                     expected_manifest = _tree_manifest(staged_runtime)
-                    if _identity(destination.parent) != parent_identity:
+                    if _fd_identity(parent_fd) != parent_identity or _identity(destination.parent) != parent_identity:
                         return _result("blocked", "extraction destination parent changed before publish")
-                    if destination.exists():
-                        destination_runtime = destination / "Libraries"
-                        if destination_runtime.exists() or destination_runtime.is_symlink():
-                            return _result("blocked", "extraction destination already contains Libraries")
-                    else:
-                        destination.mkdir()
-                        created_destination = True
-                    if _identity(destination.parent) != parent_identity:
-                        if created_destination and not any(destination.iterdir()):
-                            destination.rmdir()
-                        return _result("blocked", "extraction destination parent changed before publish")
-                    published_runtime = destination / "Libraries"
                     try:
-                        os.replace(staged_runtime, published_runtime)
+                        destination_fd = _directory_fd(destination.name, dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        os.mkdir(destination.name, mode=0o755, dir_fd=parent_fd)
+                        created_destination = True
+                        destination_fd = _directory_fd(destination.name, dir_fd=parent_fd)
                     except OSError as exc:
-                        if published_runtime.exists() and not published_runtime.is_symlink():
+                        return _result("blocked", f"extraction destination is not a stable directory: {exc}")
+                    if _fd_identity(parent_fd) != parent_identity or _identity(destination.parent) != parent_identity:
+                        if created_destination:
+                            try:
+                                os.rmdir(destination.name, dir_fd=parent_fd)
+                                created_destination = False
+                                os.close(destination_fd)
+                                destination_fd = -1
+                            except OSError:
+                                return _result(
+                                    "blocked",
+                                    "extraction destination parent changed after creation",
+                                    mutation=True,
+                                    lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                                    post_state="UNKNOWN",
+                                    rollback="unknown",
+                                )
+                        return _result("blocked", "extraction destination parent changed before publish")
+                    try:
+                        os.stat("Libraries", dir_fd=destination_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        return _result("blocked", "extraction destination already contains Libraries")
+                    published_runtime = destination / "Libraries"
+                    stage_fd = _directory_fd(stage_path)
+                    try:
+                        # Bind both sides of the rename to already-open
+                        # directory descriptors. A path swap to a symlink or a
+                        # different parent cannot redirect publication outside
+                        # the validated destination.
+                        os.replace(
+                            "Libraries",
+                            "Libraries",
+                            src_dir_fd=stage_fd,
+                            dst_dir_fd=destination_fd,
+                        )
+                    except OSError as exc:
+                        if _fd_identity(destination_fd) == _identity(destination):
+                            try:
+                                os.stat("Libraries", dir_fd=destination_fd, follow_symlinks=False)
+                                published_exists = True
+                            except OSError:
+                                published_exists = False
+                        else:
+                            published_exists = False
+                        if published_exists and not published_runtime.is_symlink():
                             try:
                                 observed_manifest = _tree_manifest(published_runtime)
                             except OSError:
                                 observed_manifest = None
-                            if observed_manifest == expected_manifest and _identity(destination.parent) == parent_identity:
+                            if (
+                                observed_manifest == expected_manifest
+                                and _fd_identity(parent_fd) == parent_identity
+                                and _identity(destination.parent) == parent_identity
+                                and _fd_identity(destination_fd) == _identity(destination)
+                            ):
                                 return _result(
                                     "success",
                                     "runtime publish completed despite a post-rename error",
@@ -233,9 +299,13 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                                 post_state="UNKNOWN",
                                 rollback="unknown",
                             )
-                        if created_destination and destination.exists() and not any(destination.iterdir()):
-                            destination.rmdir()
-                            created_destination = False
+                        if created_destination and _fd_identity(destination_fd) == _identity(destination):
+                            try:
+                                os.rmdir(destination.name, dir_fd=parent_fd)
+                            except OSError:
+                                pass
+                            else:
+                                created_destination = False
                             return _result("blocked", f"runtime publish failed before mutation: {exc}")
                         return _result(
                             "blocked",
@@ -246,7 +316,11 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                             rollback="unknown",
                         )
                     published = True
-                    if _identity(destination.parent) != parent_identity:
+                    if (
+                        _fd_identity(parent_fd) != parent_identity
+                        or _identity(destination.parent) != parent_identity
+                        or _fd_identity(destination_fd) != _identity(destination)
+                    ):
                         return _result(
                             "blocked",
                             "runtime publish parent changed during publication",
@@ -276,10 +350,11 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                 post_state="UNKNOWN",
                 rollback="unknown",
             )
-        if created_destination and destination.exists() and not any(destination.iterdir()):
+        if created_destination and destination_fd != -1:
             try:
-                destination.rmdir()
-                created_destination = False
+                if not os.listdir(destination_fd):
+                    os.rmdir(destination.name, dir_fd=parent_fd)
+                    created_destination = False
             except OSError:
                 pass
         if created_destination:
@@ -293,6 +368,12 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
             )
         return _result("blocked", f"safe runtime extraction failed: {exc}")
     finally:
+        for descriptor_to_close in (stage_fd, destination_fd, parent_fd):
+            if descriptor_to_close != -1:
+                try:
+                    os.close(descriptor_to_close)
+                except OSError:
+                    pass
         if descriptor != -1:
             os.close(descriptor)
 

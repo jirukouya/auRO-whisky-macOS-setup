@@ -7,10 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 - Hardened WhiskyWine runtime publication: archives must contain one complete
-  `Libraries/` root, ancestor symlink aliases are blocked, extraction stages
-  before creating a missing destination, and post-publish tree evidence now
-  distinguishes verified publication from ambiguous outcomes. This does not
-  establish runtime provenance or live Wine behavior.
+  `Libraries/` root, ancestor symlink aliases and raw traversal paths are
+  blocked, extraction stages before creating a missing destination, and the
+  publish rename is bound to opened directory descriptors so destination swaps
+  cannot redirect bytes outside the requested directory. Post-publish tree
+  evidence distinguishes verified publication from ambiguous outcomes. This
+  does not establish runtime provenance or live Wine behavior.
 - Corrected the uninstall verification probe so an expected zero stale
   LaunchServices matches does not abort the recovery-first check under `set -e`.
 

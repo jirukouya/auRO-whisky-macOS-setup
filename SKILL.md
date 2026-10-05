@@ -412,16 +412,24 @@ caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Li
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
 
-Either way, continue identically from here:
+Either way, extract into a fresh per-run staging directory. Never reuse a
+pre-existing `~/Downloads/Libraries.tar.gz`: a stale archive must not become
+the input to a new runtime installation.
 
 ```bash
 set -e
 UARO_ROOT="${UARO_ROOT:-$(git rev-parse --show-toplevel)}"
-cd ~/Downloads
-ditto -xk WhiskyWine-Libraries.zip .
+RUNTIME_STAGE="$(mktemp -d "$HOME/Downloads/WhiskyWine-extract.XXXXXX")"
+trap 'rm -rf "$RUNTIME_STAGE"' EXIT
+ditto -xk "$HOME/Downloads/WhiskyWine-Libraries.zip" "$RUNTIME_STAGE"
+RUNTIME_ARCHIVE="$RUNTIME_STAGE/Libraries.tar.gz"
+test -f "$RUNTIME_ARCHIVE" || {
+  echo "BLOCKED: the freshly extracted WhiskyWine archive is missing Libraries.tar.gz" >&2
+  exit 1
+}
 mkdir -p "$SUPPORT"
 python3 "$UARO_ROOT/scripts/whiskywine.py" extract-runtime \
-  --archive "$HOME/Downloads/Libraries.tar.gz" \
+  --archive "$RUNTIME_ARCHIVE" \
   --destination "$SUPPORT"
 ```
 
@@ -429,7 +437,9 @@ The repository helper validates every tar member before extraction and blocks
 absolute/traversal paths, links, special files, duplicate paths, ancestor
 symlink aliases, multi-root archives, and writes into an already-populated
 `Libraries` destination. It stages the complete expected tree before the one
-publish point and verifies the published tree afterward. Its structured result
+publish point, binds the publish rename to opened directory descriptors, and
+verifies the published tree afterward. Raw `..` traversal is rejected before
+symlink resolution, so an alias cannot redirect the destination. Its structured result
 distinguishes `BLOCKED_NO_MUTATION`, `PUBLISHED_VERIFIED`, and
 `AMBIGUOUS_NEEDS_INSPECTION`; runtime provenance remains unconfirmed. This is
 extraction and publish safety only.
@@ -2031,7 +2041,22 @@ Would you like to install AzzyAI now? **Yes / No**
 
 ```bash
 set -e
+UNINSTALL_LEVEL="${UNINSTALL_LEVEL:?Set UNINSTALL_LEVEL to exactly 1, 2, 3, or 4 for this invocation}"
+case "$UNINSTALL_LEVEL" in
+  1|2|3|4) ;;
+  *) echo "BLOCKED: UNINSTALL_LEVEL must be exactly 1, 2, 3, or 4" >&2; exit 1 ;;
+esac
 GAME_DIR="${GAME_DIR:?Resolve the real game directory before continuing}"
+[[ ! -L "$GAME_DIR" ]] || { echo "BLOCKED: GAME_DIR itself must not be a symlink" >&2; exit 1; }
+GAME_DIR="$(cd "$GAME_DIR" && pwd -P)" || { echo "BLOCKED: GAME_DIR cannot be canonicalized" >&2; exit 1; }
+[[ "$GAME_DIR" != "/" && "$GAME_DIR" != "$HOME" && "$GAME_DIR" != "$HOME/" ]] || {
+  echo "BLOCKED: GAME_DIR is too broad to remove" >&2
+  exit 1
+}
+[[ -d "$GAME_DIR/savedata" && -f "$GAME_DIR/setup.exe" && -f "$GAME_DIR/uaRO.exe" ]] || {
+  echo "BLOCKED: GAME_DIR does not contain the expected uaRO identity files" >&2
+  exit 1
+}
 AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before starting the backup transaction}"
 PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
 [[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
@@ -2045,6 +2070,11 @@ AURO_EXECUTOR="$AURO_REPO_ROOT/scripts/uaro.py"
 }
 SOURCE="$GAME_DIR/savedata"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Games/uaRO-savedata-backups}"
+mkdir -p "$BACKUP_ROOT"
+BACKUP_ROOT="$(cd "$BACKUP_ROOT" && pwd -P)" || {
+  echo "BLOCKED: BACKUP_ROOT cannot be canonicalized" >&2
+  exit 1
+}
 
 if [[ -n "${BACKUP_DIR:-}" ]]; then
   case "$BACKUP_DIR" in
@@ -2057,6 +2087,17 @@ else
     BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
   done
 fi
+BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
+mkdir -p "$BACKUP_PARENT"
+BACKUP_PARENT="$(cd "$BACKUP_PARENT" && pwd -P)" || {
+  echo "BLOCKED: backup destination parent cannot be canonicalized" >&2
+  exit 1
+}
+BACKUP_DIR="$BACKUP_PARENT/$(basename "$BACKUP_DIR")"
+case "$BACKUP_DIR" in
+  "$BACKUP_ROOT"/*) ;;
+  *) echo "BLOCKED: backup destination escapes BACKUP_ROOT" >&2; exit 1 ;;
+esac
 if [[ -e "$BACKUP_DIR" ]]; then
   echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR" >&2
   exit 1
@@ -2122,11 +2163,14 @@ then
   exit 1
 fi
 
-SAVEDATA_BACKUP_VERIFIED=1
-echo "Savedata backup independently verified at $BACKUP_TARGET"
+BACKUP_EVIDENCE_VERIFIED=1
+echo "Savedata backup evidence independently verified at $BACKUP_TARGET"
 ```
 
-SAVEDATA_BACKUP_VERIFIED=1 is set only after the deterministic executor reports a successful copy and an equal source/destination comparison. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
+`BACKUP_EVIDENCE_VERIFIED=1` is descriptive evidence only; it is not deletion
+authority. Set `UNINSTALL_LEVEL` for the current invocation, run this backup
+block, and then run only the matching non-cascading deletion block below in the
+same shell. Do not copy all levels into one executable block.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 
@@ -2144,11 +2188,8 @@ command -v trash >/dev/null || { echo "The 'trash' command is required for recov
 ```
 
 ```bash
-# --- Level 1: game only ---
-if [[ "${SAVEDATA_BACKUP_VERIFIED:-0}" != 1 ]]; then
-  echo "Verified savedata backup is required in this same shell before deletion"
-  exit 1
-fi
+[[ "${UNINSTALL_LEVEL:-}" == 1 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=1" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 for TARGET in \
@@ -2168,13 +2209,19 @@ done
 test -d "$GAME_DIR" && echo "still there" || echo "removed"
 command -v uaro-cli && echo "still there" || echo "removed"
 test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer leftovers still there" || echo "installer leftovers removed"
+```
 
-# --- Level 2: also drop the bottle ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 2 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=2" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
 "$WHISKY" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
 "$WHISKY" list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
+```
 
-# --- Level 3: also remove Whisky.app + the WhiskyWine runtime ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 3 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=3" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
 for TARGET in \
   "/Applications/Whisky.app" \
   "$HOME/Applications/Whisky.app" \
@@ -2183,8 +2230,13 @@ for TARGET in \
 done
 brew uninstall --cask whisky 2>/dev/null   # no-op if it was sideloaded, not brewed
 command -v whisky || echo "whisky CLI gone"
+```
 
-# --- Level 4: also remove shared infra (confirm nothing else needs these first) ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 4 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=4" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+# Level 4 remains a separate, explicitly selected operation because it removes
+# shared infrastructure that may serve unrelated applications.
 softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs Rosetta
 # Homebrew's own uninstall is interactive/destructive to *everything* it manages —
 # don't script this blind; point the user at https://github.com/Homebrew/install#uninstall-homebrew
