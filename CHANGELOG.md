@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+- Migrated the repository verification workflow from the retiring `macos-14`
+  arm64 runner to the architecture-equivalent `macos-15` runner. The workflow
+  remains a repository and fixture verification gate; it does not prove live
+  Whisky, Wine, or game behavior.
+
 ### Added
 - Added bounded FCOM write-failure containment: the approved `setup.exe`
   transaction stages patched bytes in a temporary sibling and atomically
