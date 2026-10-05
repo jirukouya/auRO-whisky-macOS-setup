@@ -2164,7 +2164,7 @@ done
 # The installer ZIP/extraction directory are siblings of $GAME_DIR, not children;
 # include them in Level 1 so a multi-GB download does not leak after uninstall.
 # Verify: neither app should resolve, and the game dir should be gone
-"$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
+"$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" || true ;# expect 0; grep returns 1 when no stale registration exists
 test -d "$GAME_DIR" && echo "still there" || echo "removed"
 command -v uaro-cli && echo "still there" || echo "removed"
 test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer leftovers still there" || echo "installer leftovers removed"
