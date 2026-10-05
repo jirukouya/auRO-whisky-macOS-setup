@@ -39,6 +39,8 @@ def _result(
         rollback = "not-needed"
     return {
         "operation": "extract-whiskywine-runtime",
+        "execution_authority": False,
+        "provenance": "unconfirmed",
         "result": result,
         "reason": reason,
         "mutation": mutation,
@@ -104,6 +106,13 @@ def _fd_identity(descriptor: int) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
+def _path_matches_fd(path: Path, descriptor: int) -> bool:
+    try:
+        return _identity(path) == _fd_identity(descriptor)
+    except OSError:
+        return False
+
+
 def _directory_fd(path: Path, *, dir_fd: int | None = None) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     return os.open(path, flags, dir_fd=dir_fd)
@@ -125,6 +134,45 @@ def _tree_manifest(root: Path) -> dict[str, tuple[str, int, str]]:
             raise OSError("published runtime contains a special file")
         digest = hashlib.sha256(item.read_bytes()).hexdigest()
         manifest[relative] = ("file", metadata.st_size, digest)
+    return manifest
+
+
+def _tree_manifest_at_fd(root_fd: int) -> dict[str, tuple[str, int, str]]:
+    """Capture a published tree without resolving paths outside an open dirfd."""
+
+    manifest: dict[str, tuple[str, int, str]] = {}
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+
+    def visit(descriptor: int, prefix: str) -> None:
+        for entry in sorted(os.scandir(descriptor), key=lambda item: item.name):
+            relative = f"{prefix}/{entry.name}" if prefix else entry.name
+            metadata = entry.stat(follow_symlinks=False)
+            if stat.S_ISLNK(metadata.st_mode):
+                raise OSError("published runtime contains a symbolic link")
+            if stat.S_ISDIR(metadata.st_mode):
+                child = os.open(entry.name, directory_flags, dir_fd=descriptor)
+                try:
+                    manifest[relative] = ("directory", 0, "")
+                    visit(child, relative)
+                finally:
+                    os.close(child)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise OSError("published runtime contains a special file")
+            child = os.open(entry.name, file_flags, dir_fd=descriptor)
+            try:
+                digest = hashlib.sha256()
+                with os.fdopen(child, "rb") as stream:
+                    child = -1
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                manifest[relative] = ("file", metadata.st_size, digest.hexdigest())
+            finally:
+                if child != -1:
+                    os.close(child)
+
+    visit(root_fd, "")
     return manifest
 
 
@@ -220,6 +268,9 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                     if not staged_runtime.is_dir() or staged_runtime.is_symlink():
                         return _result("blocked", "runtime archive Libraries root is not a regular directory")
                     expected_manifest = _tree_manifest(staged_runtime)
+                    wine_entry = expected_manifest.get("Wine/bin/wine64")
+                    if wine_entry is None or wine_entry[0] != "file":
+                        return _result("blocked", "runtime archive is missing the required Wine/bin/wine64 file")
                     if _fd_identity(parent_fd) != parent_identity or _identity(destination.parent) != parent_identity:
                         return _result("blocked", "extraction destination parent changed before publish")
                     try:
@@ -267,7 +318,7 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                             dst_dir_fd=destination_fd,
                         )
                     except OSError as exc:
-                        if _fd_identity(destination_fd) == _identity(destination):
+                        if _path_matches_fd(destination, destination_fd):
                             try:
                                 os.stat("Libraries", dir_fd=destination_fd, follow_symlinks=False)
                                 published_exists = True
@@ -275,16 +326,23 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                                 published_exists = False
                         else:
                             published_exists = False
-                        if published_exists and not published_runtime.is_symlink():
+                        if published_exists:
+                            child_matches = False
                             try:
-                                observed_manifest = _tree_manifest(published_runtime)
+                                published_fd = _directory_fd("Libraries", dir_fd=destination_fd)
+                                try:
+                                    observed_manifest = _tree_manifest_at_fd(published_fd)
+                                    child_matches = _path_matches_fd(published_runtime, published_fd)
+                                finally:
+                                    os.close(published_fd)
                             except OSError:
                                 observed_manifest = None
                             if (
                                 observed_manifest == expected_manifest
                                 and _fd_identity(parent_fd) == parent_identity
                                 and _identity(destination.parent) == parent_identity
-                                and _fd_identity(destination_fd) == _identity(destination)
+                                and _path_matches_fd(destination, destination_fd)
+                                and child_matches
                             ):
                                 return _result(
                                     "success",
@@ -299,18 +357,25 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                                 post_state="UNKNOWN",
                                 rollback="unknown",
                             )
-                        if created_destination and _fd_identity(destination_fd) == _identity(destination):
+                        if created_destination and _path_matches_fd(destination, destination_fd):
                             try:
                                 os.rmdir(destination.name, dir_fd=parent_fd)
                             except OSError:
-                                pass
+                                return _result(
+                                    "blocked",
+                                    f"runtime publish failed after destination mutation: {exc}",
+                                    mutation=True,
+                                    lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                                    post_state="UNKNOWN",
+                                    rollback="unknown",
+                                )
                             else:
                                 created_destination = False
                             return _result("blocked", f"runtime publish failed before mutation: {exc}")
                         return _result(
                             "blocked",
                             f"runtime publish outcome is ambiguous: {exc}",
-                            mutation=created_destination,
+                            mutation=True,
                             lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
                             post_state="UNKNOWN",
                             rollback="unknown",
@@ -319,7 +384,7 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                     if (
                         _fd_identity(parent_fd) != parent_identity
                         or _identity(destination.parent) != parent_identity
-                        or _fd_identity(destination_fd) != _identity(destination)
+                        or not _path_matches_fd(destination, destination_fd)
                     ):
                         return _result(
                             "blocked",
@@ -329,11 +394,30 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                             post_state="UNKNOWN",
                             rollback="unknown",
                         )
-                    observed_manifest = _tree_manifest(published_runtime)
+                    published_fd = _directory_fd("Libraries", dir_fd=destination_fd)
+                    try:
+                        observed_manifest = _tree_manifest_at_fd(published_fd)
+                        child_matches = _path_matches_fd(published_runtime, published_fd)
+                    finally:
+                        os.close(published_fd)
                     if observed_manifest != expected_manifest:
                         return _result(
                             "blocked",
                             "runtime publish postcondition did not match staged content",
+                            mutation=True,
+                            lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                            post_state="UNKNOWN",
+                            rollback="unknown",
+                        )
+                    if (
+                        _fd_identity(parent_fd) != parent_identity
+                        or _identity(destination.parent) != parent_identity
+                        or not _path_matches_fd(destination, destination_fd)
+                        or not child_matches
+                    ):
+                        return _result(
+                            "blocked",
+                            "runtime publish destination changed during postcondition readback",
                             mutation=True,
                             lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
                             post_state="UNKNOWN",

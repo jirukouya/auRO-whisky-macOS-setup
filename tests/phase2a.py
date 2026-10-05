@@ -659,6 +659,7 @@ def test_savedata_gate() -> None:
     block = savedata_block()
     require("backup savedata" in block, "savedata route does not invoke the deterministic executor")
     require("BACKUP_JSON" in block and "backup_verified" in block, "savedata route does not validate structured evidence")
+    require("BACKUP_EVIDENCE_FILE" in block and "pid=$$" in block and "readonly BACKUP_EVIDENCE_VERIFIED" in block, "savedata evidence is not bound to the current shell")
     require("comparison.get(\"status\") != \"equal\"" in block, "savedata route does not require independent comparison")
     require(block.index("BACKUP_EVIDENCE_VERIFIED=1") > block.index("backup_verified"), "backup evidence is emitted before executor validation")
     require("UNINSTALL_LEVEL=\"${UNINSTALL_LEVEL:?" in block, "uninstall level is not explicitly selected for this invocation")

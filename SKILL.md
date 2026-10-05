@@ -437,12 +437,15 @@ The repository helper validates every tar member before extraction and blocks
 absolute/traversal paths, links, special files, duplicate paths, ancestor
 symlink aliases, multi-root archives, and writes into an already-populated
 `Libraries` destination. It stages the complete expected tree before the one
-publish point, binds the publish rename to opened directory descriptors, and
-verifies the published tree afterward. Raw `..` traversal is rejected before
-symlink resolution, so an alias cannot redirect the destination. Its structured result
+publish point, binds the publish rename and post-publish tree readback to opened
+directory descriptors, and rechecks the destination identity afterward. Raw
+`..` traversal is rejected before symlink resolution, so an alias cannot
+redirect the destination. The staged tree must also contain the required
+`Libraries/Wine/bin/wine64` runtime entry before publication. Its structured result
 distinguishes `BLOCKED_NO_MUTATION`, `PUBLISHED_VERIFIED`, and
-`AMBIGUOUS_NEEDS_INSPECTION`; runtime provenance remains unconfirmed. This is
-extraction and publish safety only.
+`AMBIGUOUS_NEEDS_INSPECTION`, always reports `execution_authority: false`, and
+keeps `provenance: unconfirmed`; runtime provenance remains unconfirmed. This
+is extraction and publish safety only.
 
 **Quarantine-clear, defensively.** Runtime files extracted by the helper preserve the archive's read-only modes, and macOS's `xattr -d` requires write permission on the target just to *attempt* a delete — so it errors on nearly every file, even though (confirmed) these files never had `com.apple.quarantine` set in the first place (only the harmless `com.apple.provenance`, which doesn't block execution). This is a no-op either way, but do it defensively so it can never abort a `set -e` script:
 
@@ -2163,23 +2166,37 @@ then
   exit 1
 fi
 
-BACKUP_EVIDENCE_VERIFIED=1
+unset BACKUP_EVIDENCE_VERIFIED BACKUP_EVIDENCE_FILE
+BACKUP_EVIDENCE_FILE="$(mktemp "$BACKUP_ROOT/.uaro-backup-evidence.XXXXXX")"
+chmod 600 "$BACKUP_EVIDENCE_FILE"
+cat > "$BACKUP_EVIDENCE_FILE" <<EOF
+pid=$$
+level=$UNINSTALL_LEVEL
+game_dir=$GAME_DIR
+source=$SOURCE
+destination=$BACKUP_TARGET
+EOF
+readonly BACKUP_EVIDENCE_FILE
+readonly BACKUP_EVIDENCE_VERIFIED=1
 echo "Savedata backup evidence independently verified at $BACKUP_TARGET"
 ```
 
-`BACKUP_EVIDENCE_VERIFIED=1` is descriptive evidence only; it is not deletion
-authority. Set `UNINSTALL_LEVEL` for the current invocation, run this backup
-block, and then run only the matching non-cascading deletion block below in the
-same shell. Do not copy all levels into one executable block.
+`BACKUP_EVIDENCE_VERIFIED=1` and the adjacent evidence file are descriptive
+facts only; they are not deletion authority. Set `UNINSTALL_LEVEL` for the
+current invocation, run this backup block, and then run only the matching
+non-cascading deletion block below in the same shell. Each deletion block
+revalidates the read-only evidence file's level, source, game, and destination
+fields, so an exported flag alone cannot bypass the backup transaction. Do not
+copy all levels into one executable block.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 
 | Level | Removes | Keeps | When to use |
 |---|---|---|---|
-| **1 — Game only** | Launcher apps, `$GAME_DIR` | Bottle, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Redoing Steps 6–11 fresh (corrupted install, want a clean patch state) |
-| **2 — + Bottle** | Level 1 + the `$BOTTLE_NAME` bottle | Whisky.app, WhiskyWine runtime, Homebrew, Rosetta | Bottle config got tangled, want Step 5 redone from scratch |
-| **3 — + Whisky itself** | Level 2 + Whisky.app + the WhiskyWine runtime | Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
-| **4 — + shared infra** | Level 3 + Homebrew + Rosetta | nothing | ⚠️ Only if nothing *else* on this Mac depends on Homebrew/Rosetta — check first, most machines have unrelated tools relying on both |
+| **1 — Game only** | Launcher apps, `$GAME_DIR`, installer leftovers | Bottle, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Redoing Steps 6–11 fresh (corrupted install, want a clean patch state) |
+| **2 — Bottle only** | The `$BOTTLE_NAME` bottle | Game, savedata backup, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Bottle config got tangled; rerun Step 5 without touching the game |
+| **3 — Whisky only** | Whisky.app and the WhiskyWine runtime | Game, bottle, savedata backup, Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
+| **4 — Shared infrastructure only** | Rosetta (and Homebrew only through its separate documented uninstaller) | Game, bottle, Whisky, savedata backup | ⚠️ Only if nothing *else* on this Mac depends on shared infrastructure; check first |
 
 **Recovery-first deletion rule:** filesystem paths below use `trash`, so the user can recover an accidentally selected target from the Trash. Check that it is available before starting. If it is missing, stop and have the user remove the exact paths in Finder; do not substitute `rm -rf` or another permanent-delete command. `brew uninstall` and `softwareupdate --remove-rosetta` are separate package-manager/system operations at Levels 3–4; re-check their dependency warnings and scope before running them.
 
@@ -2190,6 +2207,11 @@ command -v trash >/dev/null || { echo "The 'trash' command is required for recov
 ```bash
 [[ "${UNINSTALL_LEVEL:-}" == 1 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=1" >&2; exit 1; }
 [[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 for TARGET in \
@@ -2214,7 +2236,14 @@ test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer lefto
 ```bash
 [[ "${UNINSTALL_LEVEL:-}" == 2 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=2" >&2; exit 1; }
 [[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+BOTTLE_NAME="${BOTTLE_NAME:?Resolve the current bottle name before continuing}"
+"$WHISKY" list | grep -Fq -- "$BOTTLE_NAME" || { echo "BLOCKED: selected bottle is not present in the current Whisky list" >&2; exit 1; }
 "$WHISKY" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
 "$WHISKY" list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
 ```
@@ -2222,6 +2251,11 @@ WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/
 ```bash
 [[ "${UNINSTALL_LEVEL:-}" == 3 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=3" >&2; exit 1; }
 [[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 for TARGET in \
   "/Applications/Whisky.app" \
   "$HOME/Applications/Whisky.app" \
@@ -2235,6 +2269,11 @@ command -v whisky || echo "whisky CLI gone"
 ```bash
 [[ "${UNINSTALL_LEVEL:-}" == 4 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=4" >&2; exit 1; }
 [[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 # Level 4 remains a separate, explicitly selected operation because it removes
 # shared infrastructure that may serve unrelated applications.
 softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs Rosetta

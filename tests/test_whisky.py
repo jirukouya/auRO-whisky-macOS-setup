@@ -14,6 +14,7 @@ import tarfile
 import unittest
 from unittest import mock
 import zipfile
+import shutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import whisky  # noqa: E402
@@ -106,6 +107,8 @@ class WhiskyPolicyTests(unittest.TestCase):
             self.assertEqual(result["result"], "success")
             self.assertEqual(result["lifecycle_state"], "PUBLISHED_VERIFIED")
             self.assertEqual(result["post_state"], "PUBLISHED")
+            self.assertFalse(result["execution_authority"])
+            self.assertEqual(result["provenance"], "unconfirmed")
             self.assertEqual((destination / "Libraries/Wine/bin/wine64").read_bytes(), b"runtime")
 
             traversal = root / "traversal.tar.gz"
@@ -139,6 +142,20 @@ class WhiskyPolicyTests(unittest.TestCase):
             result = whiskywine.extract_runtime(archive, destination)
             self.assertEqual(result["result"], "blocked")
             self.assertEqual(result["lifecycle_state"], "BLOCKED_NO_MUTATION")
+            self.assertFalse(destination.exists())
+
+    def test_whiskywine_rejects_empty_runtime_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="whiskywine-empty-runtime-") as temp:
+            root = Path(temp)
+            archive = root / "empty.tar.gz"
+            destination = root / "support"
+            with tarfile.open(archive, "w:gz") as bundle:
+                info = tarfile.TarInfo("Libraries")
+                info.type = tarfile.DIRTYPE
+                bundle.addfile(info)
+            result = whiskywine.extract_runtime(archive, destination)
+            self.assertEqual(result["result"], "blocked")
+            self.assertIn("Wine/bin/wine64", result["reason"])
             self.assertFalse(destination.exists())
 
     def test_whiskywine_staging_failure_does_not_create_destination(self) -> None:
@@ -274,6 +291,101 @@ class WhiskyPolicyTests(unittest.TestCase):
             self.assertEqual(result["lifecycle_state"], "AMBIGUOUS_NEEDS_INSPECTION")
             self.assertFalse((outside / "support").exists())
             self.assertTrue((moved_parent / "support/concurrent").is_file())
+
+    def test_whiskywine_pre_publish_failure_with_residue_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="whiskywine-prepublish-residue-") as temp:
+            root = Path(temp)
+            archive = root / "Libraries.tar.gz"
+            destination = root / "support"
+            with tarfile.open(archive, "w:gz") as bundle:
+                body = b"runtime"
+                info = tarfile.TarInfo("Libraries/Wine/bin/wine64")
+                info.size = len(body)
+                bundle.addfile(info, io.BytesIO(body))
+
+            def leave_residue_then_fail(
+                source: str | os.PathLike[str],
+                target: str | os.PathLike[str],
+                **kwargs: object,
+            ) -> None:
+                destination.joinpath("concurrent").write_bytes(b"race")
+                raise OSError("injected pre-publish failure")
+
+            with mock.patch.object(whiskywine.os, "replace", side_effect=leave_residue_then_fail):
+                result = whiskywine.extract_runtime(archive, destination)
+            self.assertEqual(result["result"], "blocked")
+            self.assertTrue(result["mutation"])
+            self.assertEqual(result["lifecycle_state"], "AMBIGUOUS_NEEDS_INSPECTION")
+            self.assertTrue((destination / "concurrent").is_file())
+
+    def test_whiskywine_post_manifest_swap_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="whiskywine-post-manifest-race-") as temp:
+            root = Path(temp)
+            archive = root / "Libraries.tar.gz"
+            destination = root / "support"
+            destination.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            original_destination = root / "support-original"
+            with tarfile.open(archive, "w:gz") as bundle:
+                body = b"runtime"
+                info = tarfile.TarInfo("Libraries/Wine/bin/wine64")
+                info.size = len(body)
+                bundle.addfile(info, io.BytesIO(body))
+
+            real_manifest = whiskywine._tree_manifest_at_fd
+            swapped = False
+
+            def manifest_then_swap(descriptor: int) -> dict[str, tuple[str, int, str]]:
+                nonlocal swapped
+                if not swapped:
+                    destination.rename(original_destination)
+                    shutil.copytree(original_destination / "Libraries", outside / "Libraries")
+                    destination.symlink_to(outside, target_is_directory=True)
+                    swapped = True
+                return real_manifest(descriptor)
+
+            with mock.patch.object(whiskywine, "_tree_manifest_at_fd", side_effect=manifest_then_swap):
+                result = whiskywine.extract_runtime(archive, destination)
+            self.assertEqual(result["result"], "blocked")
+            self.assertTrue(result["mutation"])
+            self.assertEqual(result["lifecycle_state"], "AMBIGUOUS_NEEDS_INSPECTION")
+            self.assertTrue((original_destination / "Libraries/Wine/bin/wine64").is_file())
+
+    def test_whiskywine_published_child_swap_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="whiskywine-child-race-") as temp:
+            root = Path(temp)
+            archive = root / "Libraries.tar.gz"
+            destination = root / "support"
+            destination.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            with tarfile.open(archive, "w:gz") as bundle:
+                body = b"runtime"
+                info = tarfile.TarInfo("Libraries/Wine/bin/wine64")
+                info.size = len(body)
+                bundle.addfile(info, io.BytesIO(body))
+
+            real_manifest = whiskywine._tree_manifest_at_fd
+            swapped = False
+
+            def manifest_then_swap_child(descriptor: int) -> dict[str, tuple[str, int, str]]:
+                nonlocal swapped
+                if not swapped:
+                    published = destination / "Libraries"
+                    moved = destination / "Libraries-original"
+                    published.rename(moved)
+                    shutil.copytree(moved, outside / "Libraries")
+                    published.symlink_to(outside / "Libraries", target_is_directory=True)
+                    swapped = True
+                return real_manifest(descriptor)
+
+            with mock.patch.object(whiskywine, "_tree_manifest_at_fd", side_effect=manifest_then_swap_child):
+                result = whiskywine.extract_runtime(archive, destination)
+            self.assertEqual(result["result"], "blocked")
+            self.assertTrue(result["mutation"])
+            self.assertEqual(result["lifecycle_state"], "AMBIGUOUS_NEEDS_INSPECTION")
+            self.assertTrue((destination / "Libraries-original/Wine/bin/wine64").is_file())
 
     def test_whiskywine_post_rename_error_reports_verified_publish(self) -> None:
         with tempfile.TemporaryDirectory(prefix="whiskywine-post-rename-") as temp:
