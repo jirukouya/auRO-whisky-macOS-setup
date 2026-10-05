@@ -2,9 +2,12 @@
 
 All notable changes to this skill are documented here.
 
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/) in spirit — MINOR bumps for new fixes/behavior, PATCH bumps for wording/doc-only corrections. Since this repo ships a procedure, not an API, "breaking change" isn't really applicable; a 1.0.0 will mark the install process being considered fully stable (no known open issues left).
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [Semantic Versioning](https://semver.org/) in spirit — MINOR bumps for new fixes/behavior, PATCH bumps for wording/doc-only corrections. Since this repo ships a procedure, not an API, "breaking change" isn't really applicable; a 1.0.0 remains a separate explicit release and Director-acceptance decision and does not override `MAINTENANCE_STABLE` or its accepted boundaries.
 
 ## [Unreleased]
+
+- Documented the `MAINTENANCE_STABLE` stop rule and evidence-triggered reopen
+  policy; this governance change does not alter production behavior.
 
 - Migrated the repository verification workflow from the retiring `macos-14`
   arm64 runner to the architecture-equivalent `macos-15` runner. The workflow

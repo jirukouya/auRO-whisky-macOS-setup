@@ -215,6 +215,10 @@ package-manager/system operations and require an additional dependency check.
 **Public.** The repository is maintained as a practical, evidence-driven
 Whisky route for uaRO on Apple Silicon.
 
+The engineering program is currently `MAINTENANCE_STABLE`. Read
+[`MAINTENANCE.md`](./MAINTENANCE.md) for the stop rule and evidence-triggered
+reopen policy.
+
 The current version is recorded once in the frontmatter of
 [`SKILL.md`](./SKILL.md). See [`CHANGELOG.md`](./CHANGELOG.md) for the history
 of fixes and documentation changes.
