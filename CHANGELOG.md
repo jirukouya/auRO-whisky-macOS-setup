@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ## [Unreleased]
 
 ### Added
+- Added bounded FCOM write-failure containment: the approved `setup.exe`
+  transaction stages patched bytes in a temporary sibling and atomically
+  publishes them only after the original target is revalidated. A handled
+  staging failure leaves the existing target untouched and removes the
+  temporary file; the published target is independently read back before
+  success is reported. On macOS, the exchange guard detects a target
+  replacement race or same-inode byte change and reverses the exchange when the
+  validated original no longer matches before blocking. This does not claim
+  crash durability, external-writer coordination outside that guard,
+  metadata preservation beyond the file mode, live rollback authority, or live
+  installer behavior.
 - Added a minimal macOS GitHub Actions verification workflow for pull requests
   and pushes to `main`. It runs the repository-native unit suite
   (including Whisky and AzzyAI), Phase 2A, Python compilation, and whitespace

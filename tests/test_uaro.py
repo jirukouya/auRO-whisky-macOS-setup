@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,6 +135,18 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertIn("symlink path component is unsupported", result["reason"])
         self.assertEqual(outside.read_bytes(), original)
         self.assertFalse((self.root / "setup.exe.orig-backup").exists())
+
+    def test_special_file_target_is_rejected_without_blocking_read(self) -> None:
+        target = self.root / "setup.exe"
+        os.mkfifo(target)
+
+        check = uaro.check_fcom(target)
+        result = uaro.apply_fcom(target)
+
+        self.assertEqual(check["result"], "blocked")
+        self.assertIn("not a regular file", check["reason"])
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("not a regular file", result["reason"])
 
     def test_symlink_backup_is_rejected_without_mutating_target_or_external_file(self) -> None:
         original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
@@ -355,6 +368,267 @@ class FcomSpikeTests(unittest.TestCase):
         self.assertNotEqual(result["verification"], "passed")
         self.assertEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], b"\x00")
         self.assertEqual(backup.read_bytes(), original)
+
+    def test_partial_write_failure_restores_original_target(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+
+        def fail_after_partial_write(fd: int, data: bytes) -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, data[:128])
+            os.fsync(fd)
+            raise OSError("injected partial write failure")
+
+        with mock.patch.object(uaro, "_write_fd", side_effect=fail_after_partial_write):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["mutation"])
+        self.assertEqual(result["rollback"], "not-needed")
+        self.assertEqual(result["verification"], "not-run")
+        self.assertEqual(list(self.root.glob(".setup.exe.*")), [])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_persistent_staging_failure_preserves_original_target(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+
+        def always_fail_after_partial_write(fd: int, data: bytes) -> None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, data[:128])
+            os.fsync(fd)
+            raise OSError("injected persistent write failure")
+
+        with mock.patch.object(uaro, "_write_fd", side_effect=always_fail_after_partial_write):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["mutation"])
+        self.assertEqual(result["rollback"], "not-needed")
+        self.assertEqual(result["post_state"], "UNPATCHED")
+        self.assertEqual(list(self.root.glob(".setup.exe.*")), [])
+        self.assertEqual(uaro.check_fcom(target)["state"], "UNPATCHED")
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_publish_failure_before_exchange_cleans_temporary_file(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=OSError("exchange unavailable")):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertFalse(result["mutation"])
+        self.assertEqual(result["post_state"], "UNPATCHED")
+        self.assertEqual(list(self.root.glob(".setup.exe.*")), [])
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_hard_linked_target_is_rejected_before_publish(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        alias = self.root / "setup-alias.exe"
+        os.link(target, alias)
+
+        result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertIn("TARGET_LINKED", result["reason"])
+        self.assertFalse(result["mutation"])
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(alias.read_bytes(), original)
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_atomic_publish_reverses_target_replacement_race(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        replacement = fixture_binary(b"\x00", uaro.B_UNPATCHED)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-target"
+        replacement_path.write_bytes(replacement)
+        staged = self.root / ".setup.exe.staged"
+        staged.write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        expected_identity = (target.stat().st_dev, target.stat().st_ino)
+        real_exchange = uaro._rename_exchange
+        calls = 0
+
+        def race_then_exchange(source: Path, destination: Path) -> None:
+            nonlocal calls
+            if calls == 0:
+                target.rename(self.root / "old-target")
+                replacement_path.rename(target)
+            calls += 1
+            real_exchange(source, destination)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=race_then_exchange):
+            with self.assertRaisesRegex(RuntimeError, "TARGET_REPLACED"):
+                uaro._publish_staged_target(staged, target, expected_identity, original)
+
+        self.assertEqual(target.read_bytes(), replacement)
+        self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_atomic_publish_rejects_same_inode_change_after_precondition(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        staged = self.root / ".setup.exe.staged"
+        staged.write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        expected_identity = (target.stat().st_dev, target.stat().st_ino)
+        real_exchange = uaro._rename_exchange
+        calls = 0
+
+        def mutate_then_exchange(source: Path, destination: Path) -> None:
+            nonlocal calls
+            if calls == 0:
+                with target.open("r+b") as stream:
+                    stream.seek(0)
+                    stream.write(b"\xff")
+                    stream.flush()
+            calls += 1
+            real_exchange(source, destination)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=mutate_then_exchange):
+            with self.assertRaisesRegex(RuntimeError, "TARGET_CHANGED"):
+                uaro._publish_staged_target(staged, target, expected_identity, original)
+
+        self.assertEqual(target.read_bytes()[0], 0xFF)
+        self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS atomic exchange only")
+    def test_atomic_publish_reverses_symlink_target_replacement(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        outside = self.root / "outside-target"
+        outside.write_bytes(original)
+        staged = self.root / ".setup.exe.staged"
+        staged.write_bytes(fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+        expected_identity = (target.stat().st_dev, target.stat().st_ino)
+        real_exchange = uaro._rename_exchange
+        calls = 0
+
+        def replace_with_symlink_then_exchange(source: Path, destination: Path) -> None:
+            nonlocal calls
+            if calls == 0:
+                target.rename(self.root / "old-target-symlink")
+                target.symlink_to(outside)
+            calls += 1
+            real_exchange(source, destination)
+
+        with mock.patch.object(uaro, "_rename_exchange", side_effect=replace_with_symlink_then_exchange):
+            with self.assertRaisesRegex(RuntimeError, "TARGET_REPLACED"):
+                uaro._publish_staged_target(staged, target, expected_identity, original)
+
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.readlink(), outside)
+        self.assertEqual(outside.read_bytes(), original)
+        self.assertEqual(staged.read_bytes(), fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED))
+
+    def test_post_publish_error_reports_actual_patched_target(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        real_publish = uaro._publish_staged_target
+
+        def publish_then_raise(
+            staged: Path,
+            destination: Path,
+            identity: tuple[int, int],
+            expected: bytes,
+            staged_identity: tuple[int, int],
+        ) -> None:
+            real_publish(staged, destination, identity, expected, staged_identity)
+            raise OSError("injected post-publish error")
+
+        with mock.patch.object(uaro, "_publish_staged_target", side_effect=publish_then_raise):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["mutation"])
+        self.assertEqual(result["post_state"], "PATCHED")
+        self.assertIn("requires inspection", result["reason"])
+        self.assertEqual(uaro.check_fcom(target)["state"], "PATCHED")
+
+    def test_replacement_after_publish_is_not_reported_as_success(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        patched = fixture_binary(uaro.A_PATCHED, uaro.B_PATCHED)
+        target = self.target(original)
+        replacement_path = self.root / "replacement-after-publish"
+        replacement_path.write_bytes(patched)
+        real_publish = uaro._publish_staged_target
+
+        def publish_then_replace(
+            staged: Path,
+            destination: Path,
+            identity: tuple[int, int],
+            expected: bytes,
+            staged_identity: tuple[int, int],
+        ) -> tuple[int, int]:
+            published_identity = real_publish(staged, destination, identity, expected, staged_identity)
+            destination.rename(self.root / "published-target")
+            replacement_path.rename(destination)
+            return published_identity
+
+        with mock.patch.object(uaro, "_publish_staged_target", side_effect=publish_then_replace):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertTrue(result["mutation"])
+        self.assertIn("TARGET_REPLACED", result["reason"])
+        self.assertEqual(result["post_state"], "PATCHED")
+        self.assertEqual(uaro.check_fcom(target)["state"], "PATCHED")
+
+    def test_backup_replacement_during_write_is_blocked(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        real_write = uaro._write_fd
+
+        def replace_backup_then_write(fd: int, data: bytes) -> None:
+            replacement = self.root / "replacement-backup"
+            replacement.write_bytes(original[:1] + b"\xff" + original[2:])
+            backup.rename(self.root / "moved-original-backup")
+            replacement.rename(backup)
+            real_write(fd, data)
+
+        with mock.patch.object(uaro, "_write_fd", side_effect=replace_backup_then_write):
+            result = uaro.apply_fcom(target)
+
+        self.assertEqual(result["result"], "blocked")
+        self.assertEqual(result["backup_status"], "blocked")
+        self.assertIn("BACKUP_REPLACED", result["reason"])
+        self.assertTrue(result["mutation"])
+        self.assertEqual(result["post_state"], "PATCHED")
+        self.assertEqual(target.read_bytes()[uaro.SITE_A_OFFSET : uaro.SITE_A_OFFSET + 1], uaro.A_PATCHED)
+        self.assertEqual((self.root / "moved-original-backup").read_bytes(), original)
+
+    def test_backup_replacement_during_postcondition_read_is_blocked(self) -> None:
+        original = fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED)
+        target = self.target(original)
+        backup = self.backup_for(target)
+        backup.write_bytes(original)
+        backup_fd = os.open(backup, os.O_RDONLY)
+        backup_identity = (os.fstat(backup_fd).st_dev, os.fstat(backup_fd).st_ino)
+        real_read = uaro._read_fd
+        calls = 0
+
+        def read_then_replace(fd: int) -> bytes:
+            nonlocal calls
+            data = real_read(fd)
+            if fd == backup_fd and calls == 0:
+                calls += 1
+                backup.rename(self.root / "moved-postcondition-backup")
+                backup.write_bytes(original[:1] + b"\xff" + original[2:])
+            return data
+
+        try:
+            with mock.patch.object(uaro, "_read_fd", side_effect=read_then_replace):
+                error = uaro._backup_postcondition_error(backup, backup_fd, backup_identity, original)
+        finally:
+            os.close(backup_fd)
+
+        self.assertIsNotNone(error)
+        self.assertIn("BACKUP_REPLACED", error)
 
     def test_cli_check_emits_json_and_apply_has_stable_exit(self) -> None:
         target = self.target(fixture_binary(uaro.A_UNPATCHED, uaro.B_UNPATCHED))

@@ -9,12 +9,16 @@ uaRO paths or perform installation, repair, launcher, or uninstall work.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import json
 import hashlib
 import os
 from pathlib import Path
 import shutil
 import stat
+import sys
+import tempfile
 from typing import Callable, Dict, Optional, Tuple
 
 
@@ -66,6 +70,8 @@ def _target_record(target: Path, operation: str) -> Dict[str, object]:
         "backup": str(target.with_name(target.name + ".orig-backup")),
         "mutation": False,
         "backup_created": False,
+        "backup_status": "not-verified",
+        "rollback": "not-run",
         "verification": "not-run",
     }
 
@@ -75,6 +81,14 @@ def _read_and_classify(target: Path, operation: str) -> Tuple[Dict[str, object],
     symlink_reason = _symlink_path_reason(target)
     if symlink_reason:
         return _blocked(result, symlink_reason), None
+    try:
+        metadata = os.lstat(target)
+        if not stat.S_ISREG(metadata.st_mode):
+            return _blocked(result, "target is not a regular file"), None
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        return _blocked(result, f"cannot inspect target: {exc}"), None
     try:
         data = target.read_bytes()
     except OSError as exc:
@@ -221,36 +235,16 @@ def _create_backup_from_snapshot(backup: Path, original: bytes) -> None:
 
 
 def _open_readonly_regular(path: Path) -> int:
+    try:
+        metadata = os.lstat(path)
+    except OSError as exc:
+        raise OSError(f"cannot inspect regular file: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError("path is not a regular file")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise RuntimeError("backup is not a regular file")
-        return fd
-    except Exception:
-        os.close(fd)
-        raise
-
-
-def _open_writable_target(target: Path, expected_identity: Tuple[int, int]) -> int:
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(target, os.O_RDWR | nofollow)
-    except OSError:
-        try:
-            metadata = target.stat()
-            if (metadata.st_dev, metadata.st_ino) != expected_identity:
-                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed before write access")
-            os.chmod(target, metadata.st_mode | stat.S_IWUSR)
-            fd = os.open(target, os.O_RDWR | nofollow)
-        except RuntimeError:
-            raise
-        except OSError as exc:
-            raise OSError(f"cannot open setup.exe for mutation: {exc}") from exc
-
-    try:
-        if _fd_identity(fd) != expected_identity or _path_identity(target) != expected_identity:
-            raise RuntimeError("TARGET_REPLACED: setup.exe identity changed before mutation")
-        os.fchmod(fd, os.fstat(fd).st_mode | stat.S_IWUSR)
         return fd
     except Exception:
         os.close(fd)
@@ -265,6 +259,198 @@ def _write_fd(fd: int, data: bytes) -> None:
         written += os.write(fd, data[written:])
     os.fsync(fd)
 
+
+def _rename_exchange(source: Path, target: Path) -> None:
+    """Atomically exchange two existing paths on macOS."""
+
+    if sys.platform != "darwin":
+        raise RuntimeError("atomic exchange is only available on macOS")
+    try:
+        library = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
+        renameatx_np = library.renameatx_np
+    except (OSError, AttributeError) as exc:
+        raise RuntimeError(f"macOS atomic exchange unavailable: {exc}") from exc
+    renameatx_np.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameatx_np.restype = ctypes.c_int
+    at_fdcwd = -2
+    rename_swap = 0x00000002
+    if renameatx_np(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target), rename_swap) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _publish_staged_target(
+    temporary: Path,
+    target: Path,
+    expected_identity: Tuple[int, int],
+    expected_bytes: bytes,
+    expected_staged_identity: Optional[Tuple[int, int]] = None,
+) -> Tuple[int, int]:
+    """Publish a staged target and reject a macOS path-replacement race."""
+
+    if _symlink_path_reason(temporary):
+        raise RuntimeError("STAGED_REPLACED: staged FCOM path became a symlink")
+    staged_identity = _path_identity(temporary)
+    if expected_staged_identity is not None and staged_identity != expected_staged_identity:
+        raise RuntimeError("STAGED_REPLACED: staged FCOM bytes were replaced before publish")
+    if sys.platform != "darwin":
+        try:
+            os.replace(temporary, target)
+        except OSError:
+            try:
+                if _path_identity(temporary) == staged_identity:
+                    temporary.unlink()
+            except OSError:
+                pass
+            raise
+        published_identity = _path_identity(target)
+        if published_identity != staged_identity:
+            raise RuntimeError("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
+        return published_identity
+    try:
+        _rename_exchange(temporary, target)
+    except (OSError, RuntimeError):
+        try:
+            if _path_identity(temporary) == staged_identity:
+                temporary.unlink()
+        except OSError:
+            pass
+        raise
+
+    def reverse_exchange(reason: str) -> None:
+        try:
+            _rename_exchange(temporary, target)
+        except (OSError, RuntimeError) as exc:
+            raise RuntimeError(f"FCOM publish ambiguous; reverse exchange failed: {exc}") from exc
+        raise RuntimeError(reason)
+
+    try:
+        swapped_metadata = os.lstat(temporary)
+    except OSError as exc:
+        reverse_exchange(f"TARGET_REPLACED: cannot inspect displaced setup.exe: {exc}")
+    if not stat.S_ISREG(swapped_metadata.st_mode):
+        reverse_exchange("TARGET_REPLACED: displaced setup.exe is not a regular file")
+    if (swapped_metadata.st_dev, swapped_metadata.st_ino) != expected_identity:
+        reverse_exchange("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+
+    old_target_fd: Optional[int] = None
+    try:
+        old_target_fd = _open_readonly_regular(temporary)
+        if _fd_identity(old_target_fd) != expected_identity:
+            reverse_exchange("TARGET_REPLACED: displaced setup.exe identity changed before read")
+        old_target_bytes = _read_fd(old_target_fd)
+    except (OSError, RuntimeError) as exc:
+        reverse_exchange(f"TARGET_REPLACED: cannot read displaced setup.exe: {exc}")
+    finally:
+        if old_target_fd is not None:
+            os.close(old_target_fd)
+    if _path_identity(temporary) != expected_identity:
+        reverse_exchange("TARGET_REPLACED: setup.exe identity changed during atomic publish")
+    if old_target_bytes != expected_bytes:
+        reverse_exchange("TARGET_CHANGED: setup.exe bytes changed during atomic publish")
+    published_identity = _path_identity(target)
+    if published_identity != staged_identity:
+        reverse_exchange("TARGET_REPLACED: staged setup.exe inode was replaced during publish")
+    temporary.unlink()
+    return published_identity
+
+
+def _write_atomic_fcom_target(
+    target: Path,
+    expected_identity: Tuple[int, int],
+    original: bytes,
+    patched: bytes,
+    read_fd: int,
+) -> Tuple[int, int]:
+    """Stage patched bytes beside the target and atomically publish them.
+
+    A failed stage leaves the original target untouched. The target and its
+    original snapshot are rechecked immediately before replacement so a stale
+    read cannot silently overwrite a same-path change.
+    """
+
+    temporary: Optional[Path] = None
+    try:
+        mode = stat.S_IMODE(os.fstat(read_fd).st_mode)
+        with tempfile.NamedTemporaryFile(
+            mode="w+b", prefix=f".{target.name}.", dir=target.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            _write_fd(stream.fileno(), patched)
+            os.fchmod(stream.fileno(), mode)
+        staged_identity = _path_identity(temporary)
+        reason = _precondition_error(target, read_fd, expected_identity, original)
+        if reason:
+            raise RuntimeError(reason)
+        if os.fstat(read_fd).st_nlink > 1:
+            raise RuntimeError("TARGET_LINKED: hard-linked setup.exe is unsupported for atomic replacement")
+        try:
+            published_identity = _publish_staged_target(
+                temporary, target, expected_identity, original, staged_identity
+            )
+        except (OSError, RuntimeError):
+            # After exchange/rename has started, the path may no longer contain
+            # the staged inode. Leave it for explicit inspection rather than
+            # risking deletion of a concurrent replacement.
+            temporary = None
+            raise
+        temporary = None
+        return published_identity
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _backup_postcondition_error(
+    backup: Path,
+    fd: int,
+    expected_identity: Tuple[int, int],
+    expected_bytes: bytes,
+) -> Optional[str]:
+    """Prove the original backup was not replaced or changed during the transaction."""
+
+    try:
+        if _fd_identity(fd) != expected_identity or _path_identity(backup) != expected_identity:
+            return "BACKUP_REPLACED: original backup identity changed during mutation"
+        if _read_fd(fd) != expected_bytes:
+            return "BACKUP_CHANGED: original backup bytes changed during mutation"
+        if _fd_identity(fd) != expected_identity or _path_identity(backup) != expected_identity:
+            return "BACKUP_REPLACED: original backup identity changed during mutation"
+        if _read_fd(fd) != expected_bytes:
+            return "BACKUP_CHANGED: original backup bytes changed during mutation"
+    except OSError as exc:
+        return f"BACKUP_CHANGED: cannot verify original backup after mutation: {exc}"
+    return None
+
+
+def _record_post_state(result: Dict[str, object], data: bytes) -> None:
+    """Record the bytes actually present after a mutation attempt."""
+
+    site_a = _site_state(data, SITE_A_OFFSET, A_UNPATCHED, A_PATCHED)
+    site_b = _site_state(data, SITE_B_OFFSET, B_UNPATCHED, B_PATCHED)
+    result.update({"site_a": site_a, "site_b": site_b, "post_state": _whole_state(site_a, site_b)})
+
+
+def _record_current_target_state(result: Dict[str, object], target: Path) -> None:
+    """Read the current target path without following a target symlink."""
+
+    fd: Optional[int] = None
+    try:
+        metadata = os.lstat(target)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("target is not a regular file")
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RuntimeError("target is not a regular file")
+        _record_post_state(result, _read_fd(fd))
+    except (OSError, RuntimeError):
+        result.update({"site_a": "unavailable", "site_b": "unavailable", "post_state": "UNKNOWN"})
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 def apply_fcom(
     target_path: str | Path,
@@ -281,18 +467,27 @@ def apply_fcom(
     result = _target_record(target, "fcom-apply")
     read_fd: Optional[int] = None
     backup_fd: Optional[int] = None
-    write_fd: Optional[int] = None
     try:
         symlink_reason = _symlink_path_reason(target)
         if symlink_reason:
             return _blocked(result, symlink_reason)
         try:
+            metadata = os.lstat(target)
+            if not stat.S_ISREG(metadata.st_mode):
+                return _blocked(result, "target is not a regular file")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return _blocked(result, f"cannot inspect target: {exc}")
+        try:
             read_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            if not stat.S_ISREG(os.fstat(read_fd).st_mode):
+                raise RuntimeError("target is not a regular file")
             expected_identity = _fd_identity(read_fd)
             original = _read_fd(read_fd)
             if _path_identity(target) != expected_identity:
                 return _blocked(result, "TARGET_REPLACED: setup.exe identity changed during classification")
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             result.update(
                 {
                     "site_a": "unavailable",
@@ -361,42 +556,46 @@ def apply_fcom(
         reason = _backup_precondition_error(backup, backup_fd, backup_identity, original)
         if reason:
             return _blocked(result, reason)
-
         reason = _precondition_error(target, read_fd, expected_identity, original)
-        if reason:
-            return _blocked(result, reason)
-
-        try:
-            write_fd = _open_writable_target(target, expected_identity)
-        except RuntimeError as exc:
-            return _blocked(result, str(exc))
-        except OSError as exc:
-            return _blocked(result, str(exc))
-
-        reason = _precondition_error(target, write_fd, expected_identity, original)
         if reason:
             return _blocked(result, reason)
 
         patched = bytearray(original)
         patched[SITE_A_OFFSET : SITE_A_OFFSET + 1] = A_PATCHED
         patched[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
-
         try:
-            _write_fd(write_fd, bytes(patched))
-            result["mutation"] = True
-            final = _read_fd(write_fd)
-        except OSError as exc:
-            result["mutation"] = True
-            return _blocked(result, f"FCOM patch write/read-back failed: {exc}")
+            published_identity = _write_atomic_fcom_target(
+                target, expected_identity, original, bytes(patched), read_fd
+            )
+        except (OSError, RuntimeError) as exc:
+            _record_current_target_state(result, target)
+            if result.get("post_state") == "PATCHED":
+                result["mutation"] = True
+                return _blocked(result, f"FCOM patch publish outcome requires inspection: {exc}")
+            result["rollback"] = "not-needed"
+            return _blocked(result, f"FCOM patch staging/publish failed: {exc}")
 
+        result["mutation"] = True
+        final_fd: Optional[int] = None
         try:
-            if _fd_identity(write_fd) != expected_identity or _path_identity(target) != expected_identity:
-                return _blocked(result, "TARGET_REPLACED: setup.exe identity changed during mutation")
-        except OSError as exc:
-            return _blocked(result, f"TARGET_CHANGED: cannot verify setup.exe identity after mutation: {exc}")
+            final_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            if not stat.S_ISREG(os.fstat(final_fd).st_mode):
+                raise RuntimeError("target is not a regular file after publish")
+            if _fd_identity(final_fd) != published_identity:
+                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed after atomic publish")
+            final = _read_fd(final_fd)
+            if _fd_identity(final_fd) != published_identity or _path_identity(target) != published_identity:
+                raise RuntimeError("TARGET_REPLACED: setup.exe identity changed during post-publish read")
+        except (OSError, RuntimeError) as exc:
+            _record_current_target_state(result, target)
+            return _blocked(result, f"FCOM patch post-publish read failed: {exc}")
+        finally:
+            if final_fd is not None:
+                os.close(final_fd)
+
+        _record_post_state(result, final)
         if final != bytes(patched):
-            return _blocked(result, "TARGET_CHANGED: setup.exe changed during mutation")
-
+            return _blocked(result, "TARGET_CHANGED: setup.exe changed after atomic publish")
         if _site_state(final, SITE_A_OFFSET, A_UNPATCHED, A_PATCHED) != "patched":
             return _blocked(result, "Site A final bytes are not patched")
         if _site_state(final, SITE_B_OFFSET, B_UNPATCHED, B_PATCHED) != "patched":
@@ -409,16 +608,26 @@ def apply_fcom(
         expected[SITE_B_OFFSET : SITE_B_OFFSET + 4] = B_PATCHED
         if final != bytes(expected):
             return _blocked(result, "FCOM patch changed bytes outside approved sites")
-
         changed_offsets = {
             index for index, (before, after) in enumerate(zip(original, final)) if before != after
         }
         if changed_offsets != EXPECTED_CHANGED_OFFSETS:
             return _blocked(result, "FCOM patch diff is not exactly the approved byte set")
 
+        backup_error = _backup_postcondition_error(backup, backup_fd, backup_identity, original)
+        if backup_error:
+            result["backup_status"] = "blocked"
+            return _blocked(result, backup_error)
+        try:
+            if _path_identity(target) != published_identity:
+                return _blocked(result, "TARGET_REPLACED: setup.exe identity changed before success")
+        except OSError as exc:
+            return _blocked(result, f"TARGET_CHANGED: cannot verify setup.exe before success: {exc}")
+
         result.update(
             {
                 "post_state": "PATCHED",
+                "backup_status": "verified",
                 "result": "success",
                 "reason": "patched and verified",
                 "verification": "passed",
@@ -426,8 +635,6 @@ def apply_fcom(
         )
         return result
     finally:
-        if write_fd is not None:
-            os.close(write_fd)
         if backup_fd is not None:
             os.close(backup_fd)
         if read_fd is not None:
