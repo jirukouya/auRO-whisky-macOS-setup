@@ -42,6 +42,10 @@ clean, push, merge, or modify `main` merely to make stale prompt assumptions
 fit the checkout. Classify newer descendants before adopting them. Preserve
 unrelated dirty work and stop mutation when state is ambiguous.
 
+When the reconciled program state is `MAINTENANCE_STABLE` and no concrete
+evidence trigger exists, do not begin proactive hardening; use `MAINTENANCE.md`
+to triage a new report.
+
 Every consequential phase must name its repository identity, branch, parent
 `HEAD`, authorized files and capabilities, forbidden scope, frozen invariants,
 worktree policy, required evidence and tests, independent verification,

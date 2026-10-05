@@ -1173,6 +1173,7 @@ def test_scope() -> None:
         "AZZYAI_FIXES.md",
         ".github/workflows/verify.yml",
         "CHANGELOG.md",
+        "MAINTENANCE.md",
         "README.md",
         "SKILL.md",
         "TROUBLESHOOTING.md",
