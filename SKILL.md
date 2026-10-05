@@ -412,23 +412,40 @@ caffeinate -i curl -fL --progress-bar --max-time 30 -o ~/Downloads/WhiskyWine-Li
   "https://web.archive.org/web/20240416174812id_/https://data.getwhisky.app/Libraries.zip"
 ```
 
-Either way, continue identically from here:
+Either way, extract into a fresh per-run staging directory. Never reuse a
+pre-existing `~/Downloads/Libraries.tar.gz`: a stale archive must not become
+the input to a new runtime installation.
 
 ```bash
 set -e
 UARO_ROOT="${UARO_ROOT:-$(git rev-parse --show-toplevel)}"
-cd ~/Downloads
-ditto -xk WhiskyWine-Libraries.zip .
+RUNTIME_STAGE="$(mktemp -d "$HOME/Downloads/WhiskyWine-extract.XXXXXX")"
+trap 'rm -rf "$RUNTIME_STAGE"' EXIT
+ditto -xk "$HOME/Downloads/WhiskyWine-Libraries.zip" "$RUNTIME_STAGE"
+RUNTIME_ARCHIVE="$RUNTIME_STAGE/Libraries.tar.gz"
+test -f "$RUNTIME_ARCHIVE" || {
+  echo "BLOCKED: the freshly extracted WhiskyWine archive is missing Libraries.tar.gz" >&2
+  exit 1
+}
 mkdir -p "$SUPPORT"
 python3 "$UARO_ROOT/scripts/whiskywine.py" extract-runtime \
-  --archive "$HOME/Downloads/Libraries.tar.gz" \
+  --archive "$RUNTIME_ARCHIVE" \
   --destination "$SUPPORT"
 ```
 
 The repository helper validates every tar member before extraction and blocks
-absolute/traversal paths, links, special files, duplicate paths, and writes into
-an already-populated top-level destination. Runtime provenance remains
-unconfirmed; this is extraction safety only.
+absolute/traversal paths, links, special files, duplicate paths, ancestor
+symlink aliases, multi-root archives, and writes into an already-populated
+`Libraries` destination. It stages the complete expected tree before the one
+publish point, binds the publish rename and post-publish tree readback to opened
+directory descriptors, and rechecks the destination identity afterward. Raw
+`..` traversal is rejected before symlink resolution, so an alias cannot
+redirect the destination. The staged tree must also contain the required
+`Libraries/Wine/bin/wine64` runtime entry before publication. Its structured result
+distinguishes `BLOCKED_NO_MUTATION`, `PUBLISHED_VERIFIED`, and
+`AMBIGUOUS_NEEDS_INSPECTION`, always reports `execution_authority: false`, and
+keeps `provenance: unconfirmed`; runtime provenance remains unconfirmed. This
+is extraction and publish safety only.
 
 **Quarantine-clear, defensively.** Runtime files extracted by the helper preserve the archive's read-only modes, and macOS's `xattr -d` requires write permission on the target just to *attempt* a delete — so it errors on nearly every file, even though (confirmed) these files never had `com.apple.quarantine` set in the first place (only the harmless `com.apple.provenance`, which doesn't block execution). This is a no-op either way, but do it defensively so it can never abort a `set -e` script:
 
@@ -2027,7 +2044,22 @@ Would you like to install AzzyAI now? **Yes / No**
 
 ```bash
 set -e
+UNINSTALL_LEVEL="${UNINSTALL_LEVEL:?Set UNINSTALL_LEVEL to exactly 1, 2, 3, or 4 for this invocation}"
+case "$UNINSTALL_LEVEL" in
+  1|2|3|4) ;;
+  *) echo "BLOCKED: UNINSTALL_LEVEL must be exactly 1, 2, 3, or 4" >&2; exit 1 ;;
+esac
 GAME_DIR="${GAME_DIR:?Resolve the real game directory before continuing}"
+[[ ! -L "$GAME_DIR" ]] || { echo "BLOCKED: GAME_DIR itself must not be a symlink" >&2; exit 1; }
+GAME_DIR="$(cd "$GAME_DIR" && pwd -P)" || { echo "BLOCKED: GAME_DIR cannot be canonicalized" >&2; exit 1; }
+[[ "$GAME_DIR" != "/" && "$GAME_DIR" != "$HOME" && "$GAME_DIR" != "$HOME/" ]] || {
+  echo "BLOCKED: GAME_DIR is too broad to remove" >&2
+  exit 1
+}
+[[ -d "$GAME_DIR/savedata" && -f "$GAME_DIR/setup.exe" && -f "$GAME_DIR/uaRO.exe" ]] || {
+  echo "BLOCKED: GAME_DIR does not contain the expected uaRO identity files" >&2
+  exit 1
+}
 AURO_REPO_ROOT="${AURO_REPO_ROOT:?Resolve this checkout before starting the backup transaction}"
 PYTHON_RUNTIME="${PYTHON_RUNTIME:-$(command -v python3 || true)}"
 [[ -n "$PYTHON_RUNTIME" && "$PYTHON_RUNTIME" = /* && -x "$PYTHON_RUNTIME" ]] || {
@@ -2041,6 +2073,11 @@ AURO_EXECUTOR="$AURO_REPO_ROOT/scripts/uaro.py"
 }
 SOURCE="$GAME_DIR/savedata"
 BACKUP_ROOT="${BACKUP_ROOT:-$HOME/Games/uaRO-savedata-backups}"
+mkdir -p "$BACKUP_ROOT"
+BACKUP_ROOT="$(cd "$BACKUP_ROOT" && pwd -P)" || {
+  echo "BLOCKED: BACKUP_ROOT cannot be canonicalized" >&2
+  exit 1
+}
 
 if [[ -n "${BACKUP_DIR:-}" ]]; then
   case "$BACKUP_DIR" in
@@ -2053,6 +2090,17 @@ else
     BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
   done
 fi
+BACKUP_PARENT="$(dirname "$BACKUP_DIR")"
+mkdir -p "$BACKUP_PARENT"
+BACKUP_PARENT="$(cd "$BACKUP_PARENT" && pwd -P)" || {
+  echo "BLOCKED: backup destination parent cannot be canonicalized" >&2
+  exit 1
+}
+BACKUP_DIR="$BACKUP_PARENT/$(basename "$BACKUP_DIR")"
+case "$BACKUP_DIR" in
+  "$BACKUP_ROOT"/*) ;;
+  *) echo "BLOCKED: backup destination escapes BACKUP_ROOT" >&2; exit 1 ;;
+esac
 if [[ -e "$BACKUP_DIR" ]]; then
   echo "Backup destination already exists; refusing to merge or overwrite: $BACKUP_DIR" >&2
   exit 1
@@ -2118,20 +2166,37 @@ then
   exit 1
 fi
 
-SAVEDATA_BACKUP_VERIFIED=1
-echo "Savedata backup independently verified at $BACKUP_TARGET"
+unset BACKUP_EVIDENCE_VERIFIED BACKUP_EVIDENCE_FILE
+BACKUP_EVIDENCE_FILE="$(mktemp "$BACKUP_ROOT/.uaro-backup-evidence.XXXXXX")"
+chmod 600 "$BACKUP_EVIDENCE_FILE"
+cat > "$BACKUP_EVIDENCE_FILE" <<EOF
+pid=$$
+level=$UNINSTALL_LEVEL
+game_dir=$GAME_DIR
+source=$SOURCE
+destination=$BACKUP_TARGET
+EOF
+readonly BACKUP_EVIDENCE_FILE
+readonly BACKUP_EVIDENCE_VERIFIED=1
+echo "Savedata backup evidence independently verified at $BACKUP_TARGET"
 ```
 
-SAVEDATA_BACKUP_VERIFIED=1 is set only after the deterministic executor reports a successful copy and an equal source/destination comparison. Run this gate and the chosen deletion block in the same shell invocation. The Level 1 deletion block refuses to proceed unless that flag is present; never treat an earlier success message as deletion authority.
+`BACKUP_EVIDENCE_VERIFIED=1` and the adjacent evidence file are descriptive
+facts only; they are not deletion authority. Set `UNINSTALL_LEVEL` for the
+current invocation, run this backup block, and then run only the matching
+non-cascading deletion block below in the same shell. Each deletion block
+revalidates the read-only evidence file's level, source, game, and destination
+fields, so an exported flag alone cannot bypass the backup transaction. Do not
+copy all levels into one executable block.
 
 Everything else is safely re-derivable by re-running this skill. **Ask the user which level they actually want** — don't default to the deepest one:
 
 | Level | Removes | Keeps | When to use |
 |---|---|---|---|
-| **1 — Game only** | Launcher apps, `$GAME_DIR` | Bottle, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Redoing Steps 6–11 fresh (corrupted install, want a clean patch state) |
-| **2 — + Bottle** | Level 1 + the `$BOTTLE_NAME` bottle | Whisky.app, WhiskyWine runtime, Homebrew, Rosetta | Bottle config got tangled, want Step 5 redone from scratch |
-| **3 — + Whisky itself** | Level 2 + Whisky.app + the WhiskyWine runtime | Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
-| **4 — + shared infra** | Level 3 + Homebrew + Rosetta | nothing | ⚠️ Only if nothing *else* on this Mac depends on Homebrew/Rosetta — check first, most machines have unrelated tools relying on both |
+| **1 — Game only** | Launcher apps, `$GAME_DIR`, installer leftovers | Bottle, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Redoing Steps 6–11 fresh (corrupted install, want a clean patch state) |
+| **2 — Bottle only** | The `$BOTTLE_NAME` bottle | Game, savedata backup, WhiskyWine runtime, Whisky.app, Homebrew, Rosetta | Bottle config got tangled; rerun Step 5 without touching the game |
+| **3 — Whisky only** | Whisky.app and the WhiskyWine runtime | Game, bottle, savedata backup, Homebrew, Rosetta | Done with Wine gaming on this Mac entirely |
+| **4 — Shared infrastructure only** | Rosetta (and Homebrew only through its separate documented uninstaller) | Game, bottle, Whisky, savedata backup | ⚠️ Only if nothing *else* on this Mac depends on shared infrastructure; check first |
 
 **Recovery-first deletion rule:** filesystem paths below use `trash`, so the user can recover an accidentally selected target from the Trash. Check that it is available before starting. If it is missing, stop and have the user remove the exact paths in Finder; do not substitute `rm -rf` or another permanent-delete command. `brew uninstall` and `softwareupdate --remove-rosetta` are separate package-manager/system operations at Levels 3–4; re-check their dependency warnings and scope before running them.
 
@@ -2140,11 +2205,13 @@ command -v trash >/dev/null || { echo "The 'trash' command is required for recov
 ```
 
 ```bash
-# --- Level 1: game only ---
-if [[ "${SAVEDATA_BACKUP_VERIFIED:-0}" != 1 ]]; then
-  echo "Verified savedata backup is required in this same shell before deletion"
-  exit 1
-fi
+[[ "${UNINSTALL_LEVEL:-}" == 1 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=1" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 "$LSREGISTER" -u "/Applications/UaRO Patcher.app" "/Applications/UaRO Settings.app" "/Applications/UaRO Game.app" 2>/dev/null
 for TARGET in \
@@ -2160,17 +2227,35 @@ done
 # The installer ZIP/extraction directory are siblings of $GAME_DIR, not children;
 # include them in Level 1 so a multi-GB download does not leak after uninstall.
 # Verify: neither app should resolve, and the game dir should be gone
-"$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" ;# expect 0
+"$LSREGISTER" -dump 2>/dev/null | grep -c "com.uaro" || true ;# expect 0; grep returns 1 when no stale registration exists
 test -d "$GAME_DIR" && echo "still there" || echo "removed"
 command -v uaro-cli && echo "still there" || echo "removed"
 test -e ~/Games/UaRO_Setup.zip -o -d ~/Games/UaRO_Setup && echo "installer leftovers still there" || echo "installer leftovers removed"
+```
 
-# --- Level 2: also drop the bottle ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 2 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=2" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 WHISKY="$(command -v whisky || echo /Applications/Whisky.app/Contents/Resources/WhiskyCmd)"
+BOTTLE_NAME="${BOTTLE_NAME:?Resolve the current bottle name before continuing}"
+"$WHISKY" list | grep -Fq -- "$BOTTLE_NAME" || { echo "BLOCKED: selected bottle is not present in the current Whisky list" >&2; exit 1; }
 "$WHISKY" delete "$BOTTLE_NAME"   # or remove via Whisky.app GUI
 "$WHISKY" list | grep -q "$BOTTLE_NAME" && echo "still there" || echo "removed"
+```
 
-# --- Level 3: also remove Whisky.app + the WhiskyWine runtime ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 3 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=3" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
 for TARGET in \
   "/Applications/Whisky.app" \
   "$HOME/Applications/Whisky.app" \
@@ -2179,8 +2264,18 @@ for TARGET in \
 done
 brew uninstall --cask whisky 2>/dev/null   # no-op if it was sideloaded, not brewed
 command -v whisky || echo "whisky CLI gone"
+```
 
-# --- Level 4: also remove shared infra (confirm nothing else needs these first) ---
+```bash
+[[ "${UNINSTALL_LEVEL:-}" == 4 ]] || { echo "BLOCKED: this block requires UNINSTALL_LEVEL=4" >&2; exit 1; }
+[[ "${BACKUP_EVIDENCE_VERIFIED:-0}" == 1 ]] || { echo "BLOCKED: verified savedata evidence is required in this same shell" >&2; exit 1; }
+[[ -n "${BACKUP_EVIDENCE_FILE:-}" && -f "$BACKUP_EVIDENCE_FILE" && ! -L "$BACKUP_EVIDENCE_FILE" ]] || { echo "BLOCKED: current-turn backup evidence file is required" >&2; exit 1; }
+case "$BACKUP_EVIDENCE_FILE" in "$BACKUP_ROOT"/.uaro-backup-evidence.*) ;; *) echo "BLOCKED: backup evidence file is outside BACKUP_ROOT" >&2; exit 1 ;; esac
+for EXPECTED_EVIDENCE in "pid=$$" "level=$UNINSTALL_LEVEL" "game_dir=$GAME_DIR" "source=$SOURCE" "destination=$BACKUP_TARGET"; do
+  grep -Fqx -- "$EXPECTED_EVIDENCE" "$BACKUP_EVIDENCE_FILE" || { echo "BLOCKED: backup evidence does not match this invocation" >&2; exit 1; }
+done
+# Level 4 remains a separate, explicitly selected operation because it removes
+# shared infrastructure that may serve unrelated applications.
 softwareupdate --remove-rosetta 2>/dev/null   # only if truly nothing else needs Rosetta
 # Homebrew's own uninstall is interactive/destructive to *everything* it manages —
 # don't script this blind; point the user at https://github.com/Homebrew/install#uninstall-homebrew
