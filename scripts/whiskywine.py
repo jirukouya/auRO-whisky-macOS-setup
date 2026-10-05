@@ -9,6 +9,7 @@ without allowing links or special files to escape the requested destination.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,12 +22,29 @@ from typing import Any
 import unicodedata
 
 
-def _result(result: str, reason: str, *, mutation: bool = False) -> dict[str, Any]:
+def _result(
+    result: str,
+    reason: str,
+    *,
+    mutation: bool = False,
+    lifecycle_state: str | None = None,
+    post_state: str | None = None,
+    rollback: str | None = None,
+) -> dict[str, Any]:
+    if lifecycle_state is None:
+        lifecycle_state = "PUBLISHED_VERIFIED" if result == "success" else "BLOCKED_NO_MUTATION"
+    if post_state is None:
+        post_state = "PUBLISHED" if result == "success" else "UNCHANGED"
+    if rollback is None:
+        rollback = "not-needed"
     return {
         "operation": "extract-whiskywine-runtime",
         "result": result,
         "reason": reason,
         "mutation": mutation,
+        "lifecycle_state": lifecycle_state,
+        "post_state": post_state,
+        "rollback": rollback,
     }
 
 
@@ -47,17 +65,71 @@ def _archive_fd(path: Path) -> int:
     return os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
 
 
+def _is_symlink(path: Path) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _has_symlink_component(path: Path) -> bool:
+    """Reject user path aliases while allowing stable macOS /var and /tmp aliases."""
+
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        if _is_symlink(current):
+            if current in (Path("/var"), Path("/tmp")) and os.path.realpath(current) in {
+                "/private/var",
+                "/private/tmp",
+            }:
+                continue
+            return True
+    return False
+
+
+def _identity(path: Path) -> tuple[int, int]:
+    metadata = os.lstat(path)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _tree_manifest(root: Path) -> dict[str, tuple[str, int, str]]:
+    """Capture regular-file bytes and directory shape for post-publish readback."""
+
+    manifest: dict[str, tuple[str, int, str]] = {}
+    for item in sorted(root.rglob("*")):
+        relative = item.relative_to(root).as_posix()
+        metadata = os.lstat(item)
+        if stat.S_ISLNK(metadata.st_mode):
+            raise OSError("published runtime contains a symbolic link")
+        if stat.S_ISDIR(metadata.st_mode):
+            manifest[relative] = ("directory", 0, "")
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("published runtime contains a special file")
+        digest = hashlib.sha256(item.read_bytes()).hexdigest()
+        manifest[relative] = ("file", metadata.st_size, digest)
+    return manifest
+
+
 def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> dict[str, Any]:
     archive = Path(archive_path)
     destination = Path(destination_path)
     try:
+        if _has_symlink_component(destination):
+            return _result("blocked", "extraction destination contains a symlink path component")
         if destination.exists() and (destination.is_symlink() or not destination.is_dir()):
             return _result("blocked", "extraction destination must be a regular directory")
+        if not destination.parent.is_dir():
+            return _result("blocked", "extraction destination parent is missing")
+        parent_identity = _identity(destination.parent)
         descriptor = _archive_fd(archive)
     except (OSError, ValueError) as exc:
         return _result("blocked", f"cannot open runtime archive: {exc}")
 
-    stage_path: Path | None = None
+    created_destination = False
+    published = False
     try:
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
@@ -101,7 +173,6 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                         if normalized_parent in normalized_kinds and normalized_kinds[normalized_parent] != "directory":
                             return _result("blocked", "archive contains a file/directory path collision")
 
-                destination.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix=".uaro-whiskywine-", dir=destination.parent) as stage:
                     stage_path = Path(stage)
                     for member in members:
@@ -120,14 +191,106 @@ def extract_runtime(archive_path: str | Path, destination_path: str | Path) -> d
                         os.chmod(target, member.mode & 0o777)
 
                     top_level = list(stage_path.iterdir())
-                    for child in top_level:
-                        final = destination / child.name
-                        if final.exists() or final.is_symlink():
-                            return _result("blocked", f"extraction destination already contains {child.name}")
-                    for child in top_level:
-                        os.replace(child, destination / child.name)
-        return _result("success", "runtime archive validated and extracted safely", mutation=True)
+                    if {child.name for child in top_level} != {"Libraries"}:
+                        return _result("blocked", "runtime archive must contain exactly one top-level Libraries directory")
+                    staged_runtime = stage_path / "Libraries"
+                    if not staged_runtime.is_dir() or staged_runtime.is_symlink():
+                        return _result("blocked", "runtime archive Libraries root is not a regular directory")
+                    expected_manifest = _tree_manifest(staged_runtime)
+                    if _identity(destination.parent) != parent_identity:
+                        return _result("blocked", "extraction destination parent changed before publish")
+                    if destination.exists():
+                        destination_runtime = destination / "Libraries"
+                        if destination_runtime.exists() or destination_runtime.is_symlink():
+                            return _result("blocked", "extraction destination already contains Libraries")
+                    else:
+                        destination.mkdir()
+                        created_destination = True
+                    if _identity(destination.parent) != parent_identity:
+                        if created_destination and not any(destination.iterdir()):
+                            destination.rmdir()
+                        return _result("blocked", "extraction destination parent changed before publish")
+                    published_runtime = destination / "Libraries"
+                    try:
+                        os.replace(staged_runtime, published_runtime)
+                    except OSError as exc:
+                        if published_runtime.exists() and not published_runtime.is_symlink():
+                            try:
+                                observed_manifest = _tree_manifest(published_runtime)
+                            except OSError:
+                                observed_manifest = None
+                            if observed_manifest == expected_manifest and _identity(destination.parent) == parent_identity:
+                                return _result(
+                                    "success",
+                                    "runtime publish completed despite a post-rename error",
+                                    mutation=True,
+                                )
+                            return _result(
+                                "blocked",
+                                f"runtime publish outcome is ambiguous: {exc}",
+                                mutation=True,
+                                lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                                post_state="UNKNOWN",
+                                rollback="unknown",
+                            )
+                        if created_destination and destination.exists() and not any(destination.iterdir()):
+                            destination.rmdir()
+                            created_destination = False
+                            return _result("blocked", f"runtime publish failed before mutation: {exc}")
+                        return _result(
+                            "blocked",
+                            f"runtime publish outcome is ambiguous: {exc}",
+                            mutation=created_destination,
+                            lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                            post_state="UNKNOWN",
+                            rollback="unknown",
+                        )
+                    published = True
+                    if _identity(destination.parent) != parent_identity:
+                        return _result(
+                            "blocked",
+                            "runtime publish parent changed during publication",
+                            mutation=True,
+                            lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                            post_state="UNKNOWN",
+                            rollback="unknown",
+                        )
+                    observed_manifest = _tree_manifest(published_runtime)
+                    if observed_manifest != expected_manifest:
+                        return _result(
+                            "blocked",
+                            "runtime publish postcondition did not match staged content",
+                            mutation=True,
+                            lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                            post_state="UNKNOWN",
+                            rollback="unknown",
+                        )
+        return _result("success", "runtime archive validated and published safely", mutation=True)
     except (OSError, tarfile.TarError, ValueError) as exc:
+        if published:
+            return _result(
+                "blocked",
+                f"runtime publish postcondition is ambiguous: {exc}",
+                mutation=True,
+                lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                post_state="UNKNOWN",
+                rollback="unknown",
+            )
+        if created_destination and destination.exists() and not any(destination.iterdir()):
+            try:
+                destination.rmdir()
+                created_destination = False
+            except OSError:
+                pass
+        if created_destination:
+            return _result(
+                "blocked",
+                f"runtime extraction outcome is ambiguous: {exc}",
+                mutation=True,
+                lifecycle_state="AMBIGUOUS_NEEDS_INSPECTION",
+                post_state="UNKNOWN",
+                rollback="unknown",
+            )
         return _result("blocked", f"safe runtime extraction failed: {exc}")
     finally:
         if descriptor != -1:

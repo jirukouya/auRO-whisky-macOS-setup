@@ -426,9 +426,13 @@ python3 "$UARO_ROOT/scripts/whiskywine.py" extract-runtime \
 ```
 
 The repository helper validates every tar member before extraction and blocks
-absolute/traversal paths, links, special files, duplicate paths, and writes into
-an already-populated top-level destination. Runtime provenance remains
-unconfirmed; this is extraction safety only.
+absolute/traversal paths, links, special files, duplicate paths, ancestor
+symlink aliases, multi-root archives, and writes into an already-populated
+`Libraries` destination. It stages the complete expected tree before the one
+publish point and verifies the published tree afterward. Its structured result
+distinguishes `BLOCKED_NO_MUTATION`, `PUBLISHED_VERIFIED`, and
+`AMBIGUOUS_NEEDS_INSPECTION`; runtime provenance remains unconfirmed. This is
+extraction and publish safety only.
 
 **Quarantine-clear, defensively.** Runtime files extracted by the helper preserve the archive's read-only modes, and macOS's `xattr -d` requires write permission on the target just to *attempt* a delete — so it errors on nearly every file, even though (confirmed) these files never had `com.apple.quarantine` set in the first place (only the harmless `com.apple.provenance`, which doesn't block execution). This is a no-op either way, but do it defensively so it can never abort a `set -e` script:
 

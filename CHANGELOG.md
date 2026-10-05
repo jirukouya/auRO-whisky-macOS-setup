@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+- Hardened WhiskyWine runtime publication: archives must contain one complete
+  `Libraries/` root, ancestor symlink aliases are blocked, extraction stages
+  before creating a missing destination, and post-publish tree evidence now
+  distinguishes verified publication from ambiguous outcomes. This does not
+  establish runtime provenance or live Wine behavior.
+
 ### Added
 - Added bounded FCOM write-failure containment: the approved `setup.exe`
   transaction stages patched bytes in a temporary sibling and atomically
