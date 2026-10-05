@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+- Migrated the repository verification workflow from the retiring `macos-14`
+  arm64 runner to the architecture-equivalent `macos-15` runner. The workflow
+  remains a repository and fixture verification gate; it does not prove live
+  Whisky, Wine, or game behavior.
+
 - Hardened WhiskyWine runtime publication: archives must contain one complete
   `Libraries/` root, ancestor symlink aliases and raw traversal paths are
   blocked, extraction stages before creating a missing destination, and the

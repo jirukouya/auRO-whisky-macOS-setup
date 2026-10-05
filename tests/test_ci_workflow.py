@@ -18,7 +18,7 @@ class CIWorkflowContractTests(unittest.TestCase):
     def test_workflow_uses_read_only_deterministic_runner(self) -> None:
         self.assertIn('permissions:', self.source)
         self.assertIn('  contents: read', self.source)
-        self.assertIn('runs-on: macos-14', self.source)
+        self.assertIn('runs-on: macos-15', self.source)
         self.assertIn("python-version: '3.12'", self.source)
         self.assertIn('actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683', self.source)
         self.assertIn('fetch-depth: 0', self.source)
